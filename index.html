@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Warte-Wolke</title>
+<meta name="description" content="Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.">
+<meta name="theme-color" content="#17212b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Warte-Wolke">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand" aria-hidden="true"></span>
+  <h1>Warte-Wolke</h1>
+  <span class="proto">Prototyp</span>
+</header>
+
+<main id="main">
+  <!-- Fahren -->
+  <section id="view-start" class="view" aria-labelledby="h-start">
+    <h2 id="h-start">Neue Fahrt</h2>
+    <fieldset class="modes">
+      <legend>Womit bist du unterwegs?</legend>
+      <label><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
+      <label><input type="radio" name="mode" value="rad"><span>Rad</span></label>
+      <label><input type="radio" name="mode" value="bus"><span>Bus</span></label>
+      <label><input type="radio" name="mode" value="bahn"><span>Stadtbahn</span></label>
+      <label><input type="radio" name="mode" value="fuss"><span>Zu Fuß</span></label>
+    </fieldset>
+    <button id="btn-start" class="btn primary big" type="button">Fahrt starten</button>
+    <p id="start-msg" class="msg" role="status" aria-live="polite"></p>
+    <div class="card hints">
+      <h3>So klappt die Aufzeichnung</h3>
+      <ul>
+        <li>Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.</li>
+        <li>Während der Fahrt nichts antippen. Bewertet wird erst danach.</li>
+        <li>Gespeichert werden nur Halte und Durchfahrten an Ampeln, nie Start und Ziel.</li>
+      </ul>
+    </div>
+    <div id="last-trip"></div>
+  </section>
+
+  <!-- Aufzeichnung -->
+  <section id="view-drive" class="view" hidden aria-labelledby="h-drive">
+    <h2 id="h-drive" class="sr-only">Aufzeichnung läuft</h2>
+    <div class="drive-state" id="drive-state" role="status" aria-live="polite">Warte auf GPS …</div>
+    <div class="speed"><span id="drive-speed">–</span><small>km/h</small></div>
+    <dl class="counters">
+      <div><dt>Fahrzeit</dt><dd id="drive-time">0:00</dd></div>
+      <div><dt>Ampeln ohne Halt</dt><dd id="drive-pass">0</dd></div>
+      <div><dt>Halte an Ampeln</dt><dd id="drive-halts">0</dd></div>
+      <div><dt>Wartezeit</dt><dd id="drive-wait">0:00</dd></div>
+    </dl>
+    <p class="gps" id="drive-gps">GPS: –</p>
+    <p class="msg warn" id="drive-warn" hidden></p>
+    <div class="end-row">
+      <button id="btn-end" class="btn danger big" type="button">Fahrt beenden</button>
+      <button id="btn-end-confirm" class="btn danger big" type="button" hidden>Ja, beenden</button>
+      <button id="btn-end-cancel" class="btn big" type="button" hidden>Weiterfahren</button>
+    </div>
+  </section>
+
+  <!-- Bewertung -->
+  <section id="view-review" class="view" hidden aria-labelledby="h-review">
+    <h2 id="h-review">Wie war deine Fahrt?</h2>
+    <p id="review-summary" class="lead"></p>
+    <div id="review-list" class="list"></div>
+    <button id="btn-review-done" class="btn primary big" type="button">Fertig</button>
+  </section>
+
+  <!-- Statistik -->
+  <section id="view-stats" class="view" hidden aria-labelledby="h-stats">
+    <h2 id="h-stats">Deine Wartezeit</h2>
+    <div class="seg" role="group" aria-label="Zeitraum">
+      <button type="button" data-range="week" aria-pressed="true">Diese Woche</button>
+      <button type="button" data-range="all" aria-pressed="false">Gesamt</button>
+    </div>
+    <p id="stats-demo" class="msg warn" hidden>Enthält Demo-Daten aus der Testfahrt.</p>
+    <div id="stats-body"></div>
+  </section>
+
+  <!-- Karte -->
+  <section id="view-map" class="view view-map" hidden aria-labelledby="h-map">
+    <h2 id="h-map">Deine Warte-Wolke</h2>
+    <p class="lead small">Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang.</p>
+    <div id="map" role="region" aria-label="Karte der Ampeln mit deinen Wartezeiten"></div>
+    <p id="map-empty" class="msg" hidden>Noch keine Halte aufgezeichnet.</p>
+  </section>
+
+  <!-- Mehr -->
+  <section id="view-more" class="view" hidden aria-labelledby="h-more">
+    <h2 id="h-more">Daten und Einstellungen</h2>
+    <div class="card">
+      <h3>Deine Daten</h3>
+      <p class="small">Alle Daten bleiben auf diesem Gerät. Zum Auswerten kannst du sie als Datei exportieren und weitergeben.</p>
+      <div class="btn-col">
+        <button id="btn-export" class="btn" type="button">Daten exportieren (JSON)</button>
+        <button id="btn-export-csv" class="btn" type="button">Halte exportieren (CSV)</button>
+        <label class="btn file-btn">Daten importieren<input id="inp-import" type="file" accept="application/json,.json"></label>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Datenschutz</h3>
+      <label class="row" for="inp-cut">Ereignisse in der Nähe von Start und Ziel verwerfen
+        <select id="inp-cut">
+          <option value="0">aus</option>
+          <option value="200">200 m</option>
+          <option value="400">400 m</option>
+        </select>
+      </label>
+      <p class="small">So lässt sich aus den Daten nicht ablesen, wo du wohnst oder arbeitest.</p>
+    </div>
+    <div class="card">
+      <h3>Ampeldaten</h3>
+      <p class="small" id="signals-info">–</p>
+      <button id="btn-reload-signals" class="btn" type="button">Ampeln in der Umgebung neu laden</button>
+    </div>
+    <div class="card">
+      <h3>Testen ohne Fahrt</h3>
+      <p class="small">Spielt eine simulierte Fahrt mit vier Demo-Ampeln ab. Die Demo-Daten sind markiert und lassen sich einzeln löschen.</p>
+      <div class="btn-col">
+        <button id="btn-demo" class="btn" type="button">Testfahrt simulieren</button>
+        <button id="btn-demo-clear" class="btn" type="button">Demo-Daten löschen</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Alles löschen</h3>
+      <button id="btn-wipe" class="btn danger" type="button">Alle Fahrten löschen</button>
+      <div id="wipe-confirm" class="btn-col" hidden>
+        <p class="small">Wirklich alle Fahrten löschen? Das lässt sich nicht rückgängig machen.</p>
+        <button id="btn-wipe-yes" class="btn danger" type="button">Ja, alles löschen</button>
+        <button id="btn-wipe-no" class="btn" type="button">Abbrechen</button>
+      </div>
+    </div>
+    <p class="small muted">Ampelstandorte: © OpenStreetMap-Mitwirkende. Prototyp, Version <span id="app-version"></span>.</p>
+    <p id="more-msg" class="msg" role="status" aria-live="polite"></p>
+  </section>
+</main>
+
+<nav class="tabs" aria-label="Hauptnavigation">
+  <button type="button" data-view="start" aria-current="page">Fahren</button>
+  <button type="button" data-view="stats">Statistik</button>
+  <button type="button" data-view="map">Karte</button>
+  <button type="button" data-view="more">Mehr</button>
+</nav>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
