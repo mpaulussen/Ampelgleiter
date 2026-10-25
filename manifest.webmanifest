@@ -1,7 +1,7 @@
 {
   "name": "Ampelgleiter",
   "short_name": "Ampelgleiter",
-  "description": "Gleiten statt stoppen. Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.",
+  "description": "Die grüne Welle beginnt bei dir. Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn. Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.",
   "lang": "de",
   "start_url": "./",
   "scope": "./",

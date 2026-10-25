@@ -115,3 +115,4 @@ select{font:inherit;min-height:44px;padding:6px 10px;border-radius:8px;border:1p
 .cons-row{display:flex;gap:8px}
 .cons-row input{flex:1;min-width:0;font:inherit;font-size:18px;min-height:48px;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 .bilanz .kpis{margin:4px 0}
+.claim{color:var(--fg);font-size:18px}

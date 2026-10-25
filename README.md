@@ -1,6 +1,9 @@
 # Ampelgleiter – Prototyp
 
-**Gleiten statt stoppen.** Eine Initiative von barrierefrAI.
+**Die grüne Welle beginnt bei dir.**
+Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn.
+
+Eine Initiative von barrierefrAI.
 
 Eine kleine Web-App (PWA), die beim Fahren aufzeichnet, an welchen Ampeln du hältst und wie lange. Nach der Fahrt bewertest du die Ampeln mit einem Tipp. Statistik und Karte zeigen deine persönliche Warte-Wolke, also wo und wie lange du an Ampeln wartest.
 
