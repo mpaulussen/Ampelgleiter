@@ -17,6 +17,8 @@
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{margin:0;height:100%}
+@supports (height:100dvh){body{height:100dvh}}
+button,label,select,.btn{touch-action:manipulation;-webkit-tap-highlight-color:rgba(0,0,0,.08)}
 body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
 .top{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));background:var(--nav);color:var(--on-nav)}
 .top h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.01em}
@@ -49,15 +51,15 @@ button:focus-visible,input:focus-visible+span,select:focus-visible,.file-btn:foc
 .modes label{position:relative}
 .modes input{position:absolute;opacity:0}
 .modes span{display:flex;align-items:center;justify-content:center;min-height:52px;border:2px solid var(--line);border-radius:10px;background:var(--surface);font-weight:600;cursor:pointer}
-.modes input:checked+span{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,var(--surface))}
+.modes input:checked+span{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
 
 .msg{font-size:15px}
 .msg:empty{display:none}
 .msg.warn{background:var(--warn-bg);border-radius:8px;padding:8px 12px}
 
 .drive-state{font-size:22px;font-weight:700;text-align:center;padding:14px;border-radius:12px;background:var(--surface);border:1px solid var(--line)}
-.drive-state.halt{background:color-mix(in srgb,var(--bad) 18%,var(--surface));border-color:var(--bad)}
-.drive-state.moving{background:color-mix(in srgb,var(--good) 16%,var(--surface));border-color:var(--good)}
+.drive-state.halt{background:var(--warn-bg);background:color-mix(in srgb,var(--bad) 18%,var(--surface));border-color:var(--bad)}
+.drive-state.moving{background:var(--surface);background:color-mix(in srgb,var(--good) 16%,var(--surface));border-color:var(--good)}
 .speed{text-align:center;font-size:72px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
 .speed small{font-size:20px;margin-left:6px;color:var(--muted);font-weight:500}
 .counters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}

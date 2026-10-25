@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -647,7 +647,7 @@
     const lines = [head.join(';')];
     for (const tr of trips) for (const e of tr.events) {
       lines.push([tr.id, tr.mode, tr.demo ? 1 : 0, e.type === 'pass' ? 'durchfahrt' : 'halt', e.signal || '', labelFor(e).replace(/;/g, ','), e.lat, e.lon, new Date(e.t).toISOString(),
-        e.type === 'halt' ? Math.round(e.wait / 1000) : 0, e.halts || 0, e.heading ?? '', e.rating ?? '', (e.tags || []).join('|')].join(';'));
+        e.type === 'halt' ? Math.round(e.wait / 1000) : 0, e.halts || 0, (e.heading == null ? '' : e.heading), (e.rating == null ? '' : e.rating), (e.tags || []).join('|')].join(';'));
     }
     download(`ampelgleiter-halte-${stamp()}.csv`, lines.join('\n'), 'text/csv');
   });

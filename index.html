@@ -22,6 +22,7 @@
 </header>
 
 <main id="main">
+  <p id="app-error" class="msg warn app-error" role="alert" hidden></p>
   <!-- Fahren -->
   <section id="view-start" class="view" aria-labelledby="h-start">
     <h2 id="h-start">Neue Fahrt</h2>
@@ -151,6 +152,15 @@
   <button type="button" data-view="more">Mehr</button>
 </nav>
 
+<script>
+  // Zeigt Programmfehler sichtbar an, damit man sie melden kann
+  window.addEventListener('error', function (e) {
+    var b = document.getElementById('app-error');
+    if (!b) return;
+    b.hidden = false;
+    b.textContent = 'Fehler in der App: ' + (e.message || 'unbekannt') + (e.lineno ? ' (Zeile ' + e.lineno + ')' : '') + '. Bitte einen Screenshot davon schicken.';
+  });
+</script>
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
