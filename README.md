@@ -1,4 +1,4 @@
-# Ampelgleiter – Prototyp
+# Flowtown – Prototyp
 
 **Die grüne Welle beginnt bei dir.**
 Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn.
