@@ -1,8 +1,8 @@
-/* Warte-Wolke Prototyp: zeichnet Halte und Durchfahrten an Ampeln auf. Alle Daten bleiben im Browser. */
+/* Ampelgleiter Prototyp: zeichnet Halte und Durchfahrten an Ampeln auf. Alle Daten bleiben im Browser. */
 (function () {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -630,7 +630,7 @@
     const blob = new Blob([text], { type });
     const file = typeof File === 'function' ? new File([blob], name, { type }) : null;
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: 'Warte-Wolke Daten' }).catch(() => {});
+      navigator.share({ files: [file], title: 'Ampelgleiter Daten' }).catch(() => {});
       return;
     }
     const a = document.createElement('a');
@@ -640,7 +640,7 @@
   }
   const stamp = () => new Date().toISOString().slice(0, 10);
   $('#btn-export').addEventListener('click', () => {
-    download(`warte-wolke-${stamp()}.json`, JSON.stringify({ app: 'warte-wolke', version: VERSION, exported: new Date().toISOString(), names, trips }, null, 1), 'application/json');
+    download(`ampelgleiter-${stamp()}.json`, JSON.stringify({ app: 'ampelgleiter', version: VERSION, exported: new Date().toISOString(), names, trips }, null, 1), 'application/json');
   });
   $('#btn-export-csv').addEventListener('click', () => {
     const head = ['fahrt', 'verkehrsmittel', 'demo', 'typ', 'ampel', 'name', 'lat', 'lon', 'zeit', 'wartezeit_s', 'halte', 'richtung_grad', 'bewertung', 'stichworte'];
@@ -649,14 +649,14 @@
       lines.push([tr.id, tr.mode, tr.demo ? 1 : 0, e.type === 'pass' ? 'durchfahrt' : 'halt', e.signal || '', labelFor(e).replace(/;/g, ','), e.lat, e.lon, new Date(e.t).toISOString(),
         e.type === 'halt' ? Math.round(e.wait / 1000) : 0, e.halts || 0, e.heading ?? '', e.rating ?? '', (e.tags || []).join('|')].join(';'));
     }
-    download(`warte-wolke-halte-${stamp()}.csv`, lines.join('\n'), 'text/csv');
+    download(`ampelgleiter-halte-${stamp()}.csv`, lines.join('\n'), 'text/csv');
   });
   $('#inp-import').addEventListener('change', async (ev) => {
     const f = ev.target.files[0];
     if (!f) return;
     try {
       const data = JSON.parse(await f.text());
-      if (!data || !Array.isArray(data.trips)) throw new Error('kein Warte-Wolke-Export');
+      if (!data || !Array.isArray(data.trips)) throw new Error('kein Ampelgleiter-Export');
       const known = new Set(trips.map((t) => t.id));
       const add = data.trips.filter((t) => t && t.id && Array.isArray(t.events) && !known.has(t.id));
       trips = trips.concat(add); saveTrips();

@@ -1,7 +1,7 @@
 {
-  "name": "Warte-Wolke",
-  "short_name": "Warte-Wolke",
-  "description": "Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.",
+  "name": "Ampelgleiter",
+  "short_name": "Ampelgleiter",
+  "description": "Gleiten statt stoppen. Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.",
   "lang": "de",
   "start_url": "./",
   "scope": "./",
