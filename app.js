@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.2';
+  const VERSION = '0.2.3';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -33,7 +33,7 @@
   let settings = Object.assign({ mode: 'auto', cut: 200 }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
   let names = store.get('names', {});
-  let clusters = buildClusters(signalCache.nodes);
+  let clusters = [];   // wird beim Start aus den gespeicherten Ampeln aufgebaut
   const saveTrips = () => store.set('trips', trips);
 
   // ---------- Geometrie ----------
@@ -733,6 +733,7 @@
   $('#inp-cut').value = String(settings.cut);
   $('#app-version').textContent = VERSION;
   $('.proto').textContent = 'Prototyp ' + VERSION;   // zeigt zugleich: das Programm läuft
+  clusters = buildClusters(signalCache.nodes);
   updateSignalsInfo();
   renderLastTrip();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
