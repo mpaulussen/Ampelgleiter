@@ -67,6 +67,7 @@ button:focus-visible,input:focus-visible+span,select:focus-visible,.file-btn:foc
 .counters dt{font-size:13px;color:var(--muted)}
 .counters dd{margin:0;font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
 .gps{text-align:center;font-size:14px;color:var(--muted)}
+.dir{text-align:center;font-size:19px;font-weight:600;min-height:1.5em;margin-top:-8px}
 .end-row{display:flex;flex-direction:column;gap:8px}
 
 .list{display:flex;flex-direction:column;gap:10px}

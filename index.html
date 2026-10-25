@@ -53,6 +53,7 @@
     <h2 id="h-drive" class="sr-only">Aufzeichnung läuft</h2>
     <div class="drive-state" id="drive-state" role="status" aria-live="polite">Warte auf GPS …</div>
     <div class="speed"><span id="drive-speed">–</span><small>km/h</small></div>
+    <p class="dir" id="drive-dir" aria-live="off"></p>
     <dl class="counters">
       <div><dt>Fahrzeit</dt><dd id="drive-time">0:00</dd></div>
       <div><dt>Ampeln ohne Halt</dt><dd id="drive-pass">0</dd></div>
@@ -90,7 +91,9 @@
   <!-- Karte -->
   <section id="view-map" class="view view-map" hidden aria-labelledby="h-map">
     <h2 id="h-map">Deine Warte-Wolke</h2>
-    <p class="lead small">Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang.</p>
+    <p class="lead small">Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang. Tippe auf einen Kreis für die Werte je Fahrtrichtung.</p>
+    <button id="btn-locate" class="btn" type="button">Zu meinem Standort</button>
+    <p id="map-loc-msg" class="msg" role="status" aria-live="polite"></p>
     <div id="map" role="region" aria-label="Karte der Ampeln mit deinen Wartezeiten"></div>
     <p id="map-empty" class="msg" hidden>Noch keine Halte aufgezeichnet.</p>
   </section>

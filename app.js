@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.3';
+  const VERSION = '0.3.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -222,6 +222,7 @@
     if (rec.samples.length > 40) rec.samples.shift();
     rec.last = { lat: p.lat, lon: p.lon };
     $('#drive-speed').textContent = Math.round(vs * 3.6);
+    if (heading != null && vs > rec.cfg.goV) $('#drive-dir').textContent = dirName(heading);
 
     const cfg = rec.cfg;
     if (!rec.stop) {
@@ -369,6 +370,7 @@
     hideWarn();
     setDriveState('Warte auf GPS …', '');
     $('#drive-speed').textContent = '–';
+    $('#drive-dir').textContent = '';
     ['#drive-pass', '#drive-halts'].forEach((s) => { $(s).textContent = '0'; });
     $('#drive-wait').textContent = '0:00';
     $('#drive-time').textContent = '0:00';
@@ -480,20 +482,44 @@
     d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     return d.getTime();
   }
+  // Fahrten an derselben Ampel mit ähnlicher Richtung (±45°) bilden eine Zufahrt
+  function dirGroup(a, e) {
+    let g = null;
+    if (e.heading != null) {
+      for (const d of a.dirs) if (d.h != null && angDiff(d.h, e.heading) <= 45) { g = d; break; }
+    } else {
+      g = a.dirs.find((d) => d.h == null) || null;
+    }
+    if (!g) { g = { h: e.heading == null ? null : e.heading, sx: 0, sy: 0, passes: 0, halts: 0, wait: 0, maxWait: 0, up: 0, down: 0 }; a.dirs.push(g); }
+    if (e.heading != null) {
+      g.sx += Math.sin(e.heading * toR); g.sy += Math.cos(e.heading * toR);
+      g.h = (Math.atan2(g.sx, g.sy) / toR + 360) % 360;
+    }
+    return g;
+  }
+  function countInto(x, e) {
+    if (e.type === 'pass') x.passes++;
+    else { x.halts++; x.wait += e.wait; x.maxWait = Math.max(x.maxWait, e.wait); }
+    if (e.rating === 1) x.up++;
+    if (e.rating === -1) x.down++;
+  }
   function aggregate(list) {
     const per = {};
     let wait = 0, halts = 0, passes = 0;
     for (const tr of list) for (const e of tr.events) {
       if (!e.signal) continue;
-      const a = per[e.signal] || (per[e.signal] = { signal: e.signal, lat: e.lat, lon: e.lon, passes: 0, halts: 0, wait: 0, maxWait: 0, up: 0, down: 0, tags: {}, sample: e });
-      if (e.type === 'pass') { a.passes++; passes++; }
-      else { a.halts++; a.wait += e.wait; a.maxWait = Math.max(a.maxWait, e.wait); halts++; wait += e.wait; }
-      if (e.rating === 1) a.up++;
-      if (e.rating === -1) a.down++;
+      const a = per[e.signal] || (per[e.signal] = { signal: e.signal, lat: e.lat, lon: e.lon, passes: 0, halts: 0, wait: 0, maxWait: 0, up: 0, down: 0, tags: {}, sample: e, dirs: [] });
+      countInto(a, e);
+      countInto(dirGroup(a, e), e);
+      if (e.type === 'pass') passes++; else { halts++; wait += e.wait; }
       for (const t of e.tags || []) a.tags[t] = (a.tags[t] || 0) + 1;
     }
-    return { per: Object.values(per), wait, halts, passes };
+    const all = Object.values(per);
+    const approaches = [];
+    for (const a of all) for (const d of a.dirs) approaches.push(Object.assign({ sample: a.sample, signal: a.signal }, d));
+    return { per: all, approaches, wait, halts, passes };
   }
+  const dirShort = (h) => (h == null ? '–' : DIRS[Math.round(h / 45) % 8]);
   function renderStats() {
     const since = statsRange === 'week' ? weekStart() : 0;
     const list = trips.filter((t) => t.start >= since);
@@ -505,11 +531,11 @@
     }
     const ag = aggregate(list);
     const share = ag.halts + ag.passes ? ag.halts / (ag.halts + ag.passes) : 0;
-    const worst = ag.per.filter((a) => a.halts).sort((a, b) => b.wait - a.wait)[0];
-    const rows = ag.per.sort((a, b) => b.wait - a.wait).map((a) => {
+    const worst = ag.approaches.filter((a) => a.halts).sort((a, b) => b.wait - a.wait)[0];
+    const rows = ag.approaches.sort((a, b) => b.wait - a.wait).map((a) => {
       const n = a.halts + a.passes;
       const rating = a.up || a.down ? `${a.up} / ${a.down}` : '–';
-      return `<tr><td>${esc(labelFor(a.sample))}</td><td>${n}</td><td>${fmtPct(a.halts / n)}</td><td>${a.halts ? fmtS(a.wait / a.halts) : '–'}</td><td>${rating}</td></tr>`;
+      return `<tr><td>${esc(labelFor(a.sample))}</td><td>${dirShort(a.h)}</td><td>${n}</td><td>${fmtPct(a.halts / n)}</td><td>${a.halts ? fmtS(a.wait / a.halts) : '–'}</td><td>${rating}</td></tr>`;
     }).join('');
     const tripRows = list.slice().sort((a, b) => b.start - a.start).map((t) => {
       const h = t.events.filter((e) => e.type === 'halt' && e.signal);
@@ -523,9 +549,9 @@
         <div class="kpi"><b>${fmtPct(share)}</b><span>der Ampeln mit Halt</span></div>
         <div class="kpi"><b>${ag.halts ? fmtS(ag.wait / ag.halts) : '–'}</b><span>Ø Wartezeit je Halt</span></div>
       </div>
-      ${worst ? `<div class="card worst"><h3>Deine nervigste Ampel</h3><p><strong>${esc(labelFor(worst.sample))}</strong></p><p class="small">${worst.halts}× gehalten, zusammen ${fmtDur(worst.wait)} min, längster Halt ${fmtDur(worst.maxWait)} min.</p></div>` : ''}
+      ${worst ? `<div class="card worst"><h3>Deine nervigste Ampel</h3><p><strong>${esc(labelFor(worst.sample))}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><p class="small">${worst.halts}× gehalten, zusammen ${fmtDur(worst.wait)} min, längster Halt ${fmtDur(worst.maxWait)} min.</p></div>` : ''}
       <h3>Alle Ampeln</h3>
-      <div class="tbl-wrap"><table><thead><tr><th>Ampel</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead><tbody>${rows}</tbody></table></div>
       <h3>Fahrten</h3>
       <div class="list">${tripRows}</div>`;
     requestNames(ag.per.map((a) => a.sample), () => { if (!$('#view-stats').hidden) renderStats(); });
@@ -580,13 +606,49 @@
       const avgAll = a.wait / n / 1000;            // Ø Wartezeit über alle Fahrten, auch ohne Halt
       const r = 8 + Math.sqrt(avgAll) * 5;
       const col = waitColor(avgAll);
+      const dirLines = a.dirs.map((d) => {
+        const dn = d.halts + d.passes;
+        return `${esc(dirName(d.h) || 'Richtung unbekannt')}: ${dn}× vorbei, ${fmtPct(d.halts / dn)} mit Halt, Ø ${Math.round(d.wait / dn / 1000)} s`;
+      }).join('<br>');
       L.circleMarker([a.lat, a.lon], { radius: r, color: col, weight: 2, fillColor: col, fillOpacity: 0.45 })
-        .bindPopup(`<strong>${esc(labelFor(a.sample))}</strong><br>${n} Fahrten, ${fmtPct(a.halts / n)} mit Halt<br>Ø Wartezeit ${Math.round(avgAll)} s, längste ${fmtS(a.maxWait)}${a.up || a.down ? `<br>Bewertung: ${a.up} gut, ${a.down} schlecht` : ''}`)
+        .bindPopup(`<strong>${esc(labelFor(a.sample))}</strong><br>${n} Fahrten, ${fmtPct(a.halts / n)} mit Halt<br>Ø Wartezeit ${Math.round(avgAll)} s, längste ${fmtS(a.maxWait)}${a.up || a.down ? `<br>Bewertung: ${a.up} gut, ${a.down} schlecht` : ''}<br><br>${dirLines}`)
         .addTo(layer);
       pts.push([a.lat, a.lon]);
     }
+    mapHasData = pts.length > 0;
     if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 16 });
+    startMyLocation();
   }
+
+  // Eigener Standort auf der Karte, nur solange die Karte offen ist
+  let meMarker = null, meCircle = null, meWatch = null, meCenterNext = false, mapHasData = false;
+  function startMyLocation() {
+    if (!map || !('geolocation' in navigator) || meWatch != null) return;
+    if (!mapHasData && !meMarker) meCenterNext = true;
+    meWatch = navigator.geolocation.watchPosition((p) => {
+      $('#map-loc-msg').textContent = '';
+      const ll = [p.coords.latitude, p.coords.longitude];
+      if (!meMarker) {
+        meCircle = L.circle(ll, { radius: p.coords.accuracy, color: '#1d5fa6', weight: 1, fillColor: '#1d5fa6', fillOpacity: 0.12, interactive: false }).addTo(map);
+        meMarker = L.circleMarker(ll, { radius: 8, color: '#ffffff', weight: 3, fillColor: '#1d5fa6', fillOpacity: 1 }).bindTooltip('Du bist hier').addTo(map);
+      } else {
+        meMarker.setLatLng(ll); meCircle.setLatLng(ll); meCircle.setRadius(p.coords.accuracy);
+      }
+      if (meCenterNext) { map.setView(ll, 16); meCenterNext = false; }
+    }, (err) => {
+      stopMyLocation();
+      $('#map-loc-msg').textContent = err.code === 1
+        ? 'Dein Standort ist für diese Seite nicht freigegeben. In Safari: auf „aA“ in der Adressleiste tippen, dann Website-Einstellungen → Standort → Erlauben.'
+        : 'Dein Standort konnte gerade nicht bestimmt werden.';
+    }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+  }
+  function stopMyLocation() {
+    if (meWatch != null) { navigator.geolocation.clearWatch(meWatch); meWatch = null; }
+  }
+  $('#btn-locate').addEventListener('click', () => {
+    if (meMarker) map.setView(meMarker.getLatLng(), 16);
+    else { meCenterNext = true; startMyLocation(); }
+  });
 
   // ---------- Testfahrt ----------
   function demoRun() {
@@ -671,6 +733,7 @@
 
   // ---------- Navigation ----------
   function showView(name) {
+    if (name !== 'map') stopMyLocation();
     $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + name; });
     $$('.tabs button').forEach((b) => {
       const active = b.dataset.view === name || (name === 'drive' && b.dataset.view === 'start') || (name === 'review' && b.dataset.view === 'stats');
