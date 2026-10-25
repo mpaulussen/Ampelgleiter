@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.3.0';
+  const VERSION = '0.4.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -22,6 +22,10 @@
   const CLUSTER_M = 35;           // Ampelknoten in diesem Abstand bilden eine Kreuzung
   const AREA_RADIUS = 5000;       // Umkreis für das Laden der Ampeln
   const TAGS = ['zu lange gewartet', 'Grün zu kurz', 'unübersichtlich', 'Anschluss verpasst', 'alles gut'];
+  const STEADY_MIN_V = 8.33;      // Gleichmäßigkeit zählt ab 30 km/h
+  const STEADY_TOL = 1.39;        // ±5 km/h um das Mittel der letzten Minute
+  const HARD_BRAKE = -3.0;        // starke Bremsung ab 3 m/s² Verzögerung
+  const HARD_ACCEL = 2.5;         // starkes Beschleunigen ab 2,5 m/s²
   const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
   // ---------- Speicher ----------
@@ -163,6 +167,7 @@
       recentPass: {},       // Kreuzung -> Zeit der letzten Durchfahrt
       lastHaltAt: {},       // Kreuzung -> Endzeit des letzten Halts
       lastFetchAt: 0,
+      st: { moving: 0, steady: 0, steadyBase: 0, brakes: 0, accels: 0, win: [], lastVs: null, lastBrake: 0, lastAccel: 0 },
       gpsCount: 0,
       startedAt: Date.now()
     };
@@ -217,6 +222,8 @@
     const recentV = rec.samples.slice(-2).map((s) => s.v).concat(v).sort((a, b) => a - b);
     const vs = recentV[Math.floor(recentV.length / 2)];
     p.v = v;
+    if (prev) updateDrivingStats(vs, t, (t - prev.t) / 1000);
+    rec.st.lastVs = vs;
     const heading = currentHeading(p);
     rec.samples.push(p);
     if (rec.samples.length > 40) rec.samples.shift();
@@ -255,6 +262,25 @@
     }
     maybeFetchSignals(p, false);
     updateCounters();
+  }
+
+  // Fahrstil für die Fahrtbilanz: Fahrzeit in Bewegung, Gleichmäßigkeit, starke Manöver
+  function updateDrivingStats(vs, t, dt) {
+    const st = rec.st;
+    if (!(dt > 0 && dt <= 5)) { st.win = []; return; }   // Lücken (App im Hintergrund) nicht werten
+    if (vs > rec.cfg.goV) st.moving += dt * 1000;
+    st.win.push({ t, v: vs });
+    while (st.win.length && t - st.win[0].t > 60000) st.win.shift();
+    if (vs > STEADY_MIN_V && st.win.length >= 10) {
+      const mean = st.win.reduce((a, w) => a + w.v, 0) / st.win.length;
+      st.steadyBase += dt * 1000;
+      if (Math.abs(vs - mean) <= STEADY_TOL) st.steady += dt * 1000;
+    }
+    if (st.lastVs != null) {
+      const acc = (vs - st.lastVs) / dt;
+      if (acc < HARD_BRAKE && t - st.lastBrake > 5000) { st.brakes++; st.lastBrake = t; }
+      if (acc > HARD_ACCEL && t - st.lastAccel > 5000) { st.accels++; st.lastAccel = t; }
+    }
   }
 
   function checkPass(p, heading, t) {
@@ -408,6 +434,13 @@
       trip.events = trip.events.filter((e) => dist(e, rec.first) > cut && dist(e, rec.last) > cut);
     }
     trip.distance = Math.round(trip.distance);
+    const st = rec.st;
+    trip.stats = {
+      movingMs: Math.round(st.moving),
+      steadyShare: st.steadyBase >= 60000 ? Math.round(st.steady / st.steadyBase * 100) / 100 : null,
+      brakes: st.brakes,
+      accels: st.accels
+    };
     rec = null;
     if (!trip.events.length && trip.distance < 50) {
       showView('start');
@@ -434,9 +467,51 @@
     $('#review-summary').textContent = halts.length
       ? `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, zusammen ${fmtDur(wait)} Minuten gewartet. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt.${other ? ` Dazu ${other} Halt${other === 1 ? '' : 'e'} ohne Ampel in der Nähe.` : ''} Wie war es an den Ampeln?`
       : `Kein Halt an einer Ampel. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt passiert.`;
+    renderBilanz();
     renderReview();
     showView('review');
     requestNames(halts, renderReview);
+  }
+  const fmtNum = (x, d) => x.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+  function renderBilanz() {
+    const t = reviewTrip;
+    const st = t.stats || {};
+    const dur = (t.end || t.start) - t.start;
+    const km = t.distance / 1000;
+    const avg = st.movingMs ? km / (st.movingMs / 3600000) : null;
+    const per100 = km >= 5 ? ` (${fmtNum((st.brakes || 0) / km * 100, 1)} je 100 km)` : '';
+    const c = t.consumption || {};
+    $('#review-bilanz').innerHTML = `<div class="card bilanz">
+      <h3>Fahrtbilanz</h3>
+      <div class="kpis">
+        <div class="kpi"><b>${fmtNum(km, 1)} km</b><span>Strecke</span></div>
+        <div class="kpi"><b>${fmtDur(dur)}</b><span>Fahrzeit${dur < 3600000 ? ' (min)' : ''}</span></div>
+        <div class="kpi"><b>${avg ? Math.round(avg) + ' km/h' : '–'}</b><span>Ø Tempo in Bewegung</span></div>
+        <div class="kpi"><b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>
+      </div>
+      <p class="small">${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</p>
+      <label class="small" for="inp-consumption">Verbrauch laut Bordcomputer (freiwillig)</label>
+      <div class="cons-row">
+        <input id="inp-consumption" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 5,6" value="${c.value != null ? fmtNum(c.value, 1) : ''}">
+        <select id="inp-unit" aria-label="Einheit">
+          <option value="l"${c.unit !== 'kWh' ? ' selected' : ''}>l/100 km</option>
+          <option value="kWh"${c.unit === 'kWh' ? ' selected' : ''}>kWh/100 km</option>
+        </select>
+      </div>
+      <p id="cons-msg" class="small muted" role="status" aria-live="polite"></p>
+    </div>`;
+    const save = () => {
+      const raw = $('#inp-consumption').value.trim().replace(',', '.');
+      const unit = $('#inp-unit').value;
+      if (!raw) { delete reviewTrip.consumption; saveTrips(); $('#cons-msg').textContent = ''; return; }
+      const val = Number(raw);
+      if (!isFinite(val) || val <= 0 || val > 60) { $('#cons-msg').textContent = 'Bitte eine Zahl wie 5,6 eingeben.'; return; }
+      reviewTrip.consumption = { value: Math.round(val * 10) / 10, unit };
+      saveTrips();
+      $('#cons-msg').textContent = `Gespeichert: ${fmtNum(reviewTrip.consumption.value, 1)} ${unit}/100 km.`;
+    };
+    $('#inp-consumption').addEventListener('change', save);
+    $('#inp-unit').addEventListener('change', save);
   }
   function renderReview() {
     if (!reviewTrip) return;
@@ -539,8 +614,8 @@
     }).join('');
     const tripRows = list.slice().sort((a, b) => b.start - a.start).map((t) => {
       const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-      return `<div class="trip"><span>${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min</span></span>
-        <span><button type="button" data-review="${t.id}">Bewerten</button> <button type="button" data-del="${t.id}">Löschen</button></span></div>`;
+      return `<div class="trip"><span>${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}</span></span>
+        <span><button type="button" data-review="${t.id}">Ansehen</button> <button type="button" data-del="${t.id}">Löschen</button></span></div>`;
     }).join('');
     body.innerHTML = `
       <div class="kpis">
