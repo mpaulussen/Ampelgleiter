@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.6.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -18,6 +18,8 @@
   const GO_CONFIRM_MS = 2000;     // so lange schneller, bis der Halt endet
   const MIN_WAIT_MS = 3000;       // kürzere Halte werden ignoriert
   const MERGE_MS = 120000;        // Halte an derselben Ampel innerhalb dieser Zeit = ein Wartevorgang
+  const QUEUE_M = 250;            // Rückstau: Halt bis zu diesem Abstand vor einer Ampel, durch die man danach fährt
+  const QUEUE_MS = 120000;        // ... wenn die Durchfahrt höchstens so lange nach dem Halt kommt
   const MAX_ACCURACY = 50;        // ungenauere GPS-Punkte werden verworfen
   const CLUSTER_M = 35;           // Ampelknoten in diesem Abstand bilden eine Kreuzung
   const AREA_RADIUS = 5000;       // Umkreis für das Laden der Ampeln
@@ -36,7 +38,7 @@
   let trips = store.get('trips', []);
   let settings = Object.assign({ mode: 'auto', cut: 200 }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
-  let names = store.get('names', {});
+  let names = store.get('names2', {});   // 'names2': Namen mit Querstraße (ab 0.6.0)
   let clusters = [];   // wird beim Start aus den gespeicherten Ampeln aufgebaut
   const saveTrips = () => store.set('trips', trips);
 
@@ -133,18 +135,44 @@
     }
     if (!nameBusy && nameQueue.length) runNames(onDone);
   }
+  // Name einer Kreuzung: Straßen im Umkreis von 35 m, die häufigste zuerst (meist die Hauptstraße)
+  async function crossingName(q) {
+    const query = `[out:json][timeout:15];way(around:35,${q.lat},${q.lon})[highway][name];out tags;`;
+    for (const url of OVERPASS) {
+      try {
+        const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        if (!res.ok) continue;
+        const j = await res.json();
+        const count = {};
+        for (const w of j.elements || []) if (w.tags && w.tags.name) count[w.tags.name] = (count[w.tags.name] || 0) + 1;
+        const list = Object.keys(count).sort((a, b) => count[b] - count[a]);
+        if (list.length >= 2) return list[0] + ' / ' + list[1];
+        if (list.length === 1) return list[0];
+        return null;
+      } catch (e) { /* nächsten Server versuchen */ }
+    }
+    return null;
+  }
+  async function streetWithNumber(q) {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=de&lat=${q.lat}&lon=${q.lon}`);
+      if (!res.ok) return null;
+      const a = (await res.json()).address || {};
+      const road = a.road || a.pedestrian || a.footway;
+      return road ? (a.house_number ? `${road} ${a.house_number}` : road) : null;
+    } catch (e) { return null; }
+  }
   async function runNames(onDone) {
     nameBusy = true;
     while (nameQueue.length) {
       const q = nameQueue.shift();
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=de&lat=${q.lat}&lon=${q.lon}`);
-        if (res.ok) {
-          const j = await res.json();
-          const road = j.address && (j.address.road || j.address.pedestrian || j.address.footway);
-          if (road) { names[q.signal] = road; store.set('names', names); if (onDone) onDone(); }
-        }
-      } catch (e) { /* ohne Namen weiter */ }
+      let name = await crossingName(q);
+      if (!name || name.indexOf(' / ') < 0) {
+        // keine Querstraße gefunden (z. B. Fußgängerampel): Straße mit Hausnummer
+        await new Promise((r) => setTimeout(r, 1100));
+        name = (await streetWithNumber(q)) || name;
+      }
+      if (name) { names[q.signal] = name; store.set('names2', names); if (onDone) onDone(); }
       await new Promise((r) => setTimeout(r, 1100));
     }
     nameBusy = false;
@@ -326,6 +354,34 @@
     });
   }
 
+  // Ein Halt ohne Ampel in der Nähe, nach dem man bald durch eine Ampel fährt, war Rückstau vor dieser Ampel
+  function assignQueueHalts(trip) {
+    const ev = trip.events;
+    let changed = false;
+    for (let i = 0; i < ev.length; i++) {
+      const e = ev[i];
+      if (e.type !== 'halt' || e.signal) continue;
+      for (let j = i + 1; j < ev.length; j++) {
+        const n = ev[j];
+        if (n.t - (e.tEnd || e.t) > QUEUE_MS) break;
+        if (n.type === 'halt') {
+          // nächster Halt an einer Ampel: Rückstau davor zusammenfassen
+          if (n.signal && dist(e, n) <= QUEUE_M) {
+            n.wait += e.wait; n.halts += e.halts || 1; n.t = e.t; n.queued = true;
+            ev.splice(i, 1); i--; changed = true;
+          }
+          break;
+        }
+        if (n.type === 'pass' && dist(e, n) <= QUEUE_M && (e.heading == null || angDiff(bearing(e, n), e.heading) <= 45)) {
+          Object.assign(e, { signal: n.signal, distToSignal: Math.round(dist(e, n)), lat: n.lat, lon: n.lon, queued: true });
+          ev.splice(j, 1); changed = true;
+          break;
+        }
+      }
+    }
+    return changed;
+  }
+
   function maybeFetchSignals(p, first) {
     if (rec.trip.demo) return;
     if (areaCovers(p)) return;
@@ -427,6 +483,7 @@
     stopWatching();
     const trip = rec.trip;
     trip.end = rec.samples.length ? rec.samples[rec.samples.length - 1].t : Date.now();
+    assignQueueHalts(trip);
     if (!trip.start) trip.start = trip.end;
     // Datenschutz: Ereignisse nahe Start und Ziel verwerfen
     const cut = Number(settings.cut) || 0;
@@ -521,7 +578,7 @@
       const tags = e.tags || [];
       return `<article class="rev" data-idx="${idx}">
         <div class="rev-head"><strong>${esc(labelFor(e))}</strong><span class="rev-wait">${fmtDur(e.wait)} min</span></div>
-        <span class="small muted">${esc(dirName(e.heading))}${e.halts > 1 ? ` · ${e.halts} Halte` : ''} · ${new Date(e.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr</span>
+        <span class="small muted">${esc(dirName(e.heading))}${e.halts > 1 ? ` · ${e.halts} Halte` : ''}${e.queued ? ' · im Rückstau' : ''} · ${new Date(e.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr</span>
         <div class="thumbs" role="group" aria-label="Bewertung für ${esc(labelFor(e))}">
           <button type="button" class="btn up" data-rate="1" aria-pressed="${e.rating === 1}">Gut</button>
           <button type="button" class="btn down" data-rate="-1" aria-pressed="${e.rating === -1}">Schlecht</button>
@@ -872,6 +929,8 @@
   $('#app-version').textContent = VERSION;
   $('.proto').textContent = 'Prototyp ' + VERSION;   // zeigt zugleich: das Programm läuft
   clusters = buildClusters(signalCache.nodes);
+  // Ältere Fahrten einmalig nachbearbeiten (Rückstau-Halte ab 0.6.0)
+  if (trips.map((t) => assignQueueHalts(t)).some(Boolean)) saveTrips();
   updateSignalsInfo();
   renderLastTrip();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
