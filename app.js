@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.0';
+  const VERSION = '0.6.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -39,6 +39,7 @@
   let settings = Object.assign({ mode: 'auto', cut: 200 }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
   let names = store.get('names2', {});   // 'names2': Namen mit Querstraße (ab 0.6.0)
+  const oldNames = store.get('names', {}); // nur Straße (bis 0.5.0), als Übergang bis die neuen Namen da sind
   let clusters = [];   // wird beim Start aus den gespeicherten Ampeln aufgebaut
   const saveTrips = () => store.set('trips', trips);
 
@@ -125,6 +126,7 @@
   let nameBusy = false;
   function labelFor(e) {
     if (names[e.signal]) return names[e.signal];
+    if (oldNames[e.signal]) return oldNames[e.signal];
     if (e.signal && e.signal.startsWith('demo')) return 'Demo-Ampel ' + e.signal.slice(4);
     return `Ampel bei ${e.lat.toFixed(4)}, ${e.lon.toFixed(4)}`;
   }
@@ -135,27 +137,51 @@
     }
     if (!nameBusy && nameQueue.length) runNames(onDone);
   }
-  // Name einer Kreuzung: Straßen im Umkreis von 35 m, die häufigste zuerst (meist die Hauptstraße)
-  async function crossingName(q) {
-    const query = `[out:json][timeout:15];way(around:35,${q.lat},${q.lon})[highway][name];out tags;`;
+  function fetchWithTimeout(url, opts, ms) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(() => clearTimeout(timer));
+  }
+  // Abstand eines Punkts zu einer Linie aus OpenStreetMap, in Metern (lokal eben gerechnet)
+  function distToWay(p, geom) {
+    const kx = 111320 * Math.cos(p.lat * toR), ky = 110540;
+    let best = Infinity;
+    for (let i = 0; i < geom.length - 1; i++) {
+      const ax = (geom[i].lon - p.lon) * kx, ay = (geom[i].lat - p.lat) * ky;
+      const bx = (geom[i + 1].lon - p.lon) * kx, by = (geom[i + 1].lat - p.lat) * ky;
+      const dx = bx - ax, dy = by - ay, len = dx * dx + dy * dy;
+      const u = len ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len)) : 0;
+      best = Math.min(best, Math.hypot(ax + u * dx, ay + u * dy));
+    }
+    return best;
+  }
+  // Namen für mehrere Kreuzungen mit einer einzigen Abfrage: die nächste Straße zuerst, dann die Querstraße
+  async function crossingNames(list) {
+    const parts = list.map((q) => `way(around:35,${q.lat},${q.lon})[highway][name];`).join('');
+    const query = `[out:json][timeout:25];(${parts});out tags geom;`;
     for (const url of OVERPASS) {
       try {
-        const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        const res = await fetchWithTimeout(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 30000);
         if (!res.ok) continue;
-        const j = await res.json();
-        const count = {};
-        for (const w of j.elements || []) if (w.tags && w.tags.name) count[w.tags.name] = (count[w.tags.name] || 0) + 1;
-        const list = Object.keys(count).sort((a, b) => count[b] - count[a]);
-        if (list.length >= 2) return list[0] + ' / ' + list[1];
-        if (list.length === 1) return list[0];
-        return null;
+        const ways = ((await res.json()).elements || []).filter((w) => w.tags && w.tags.name && w.geometry && w.geometry.length > 1);
+        const out = {};
+        for (const q of list) {
+          const near = {};
+          for (const w of ways) {
+            const d = distToWay(q, w.geometry);
+            if (d <= 35 && (near[w.tags.name] == null || d < near[w.tags.name])) near[w.tags.name] = d;
+          }
+          const sorted = Object.keys(near).sort((a, b) => near[a] - near[b]);
+          out[q.signal] = sorted.length >= 2 ? sorted[0] + ' / ' + sorted[1] : (sorted[0] || null);
+        }
+        return out;
       } catch (e) { /* nächsten Server versuchen */ }
     }
     return null;
   }
   async function streetWithNumber(q) {
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=de&lat=${q.lat}&lon=${q.lon}`);
+      const res = await fetchWithTimeout(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=de&lat=${q.lat}&lon=${q.lon}`, {}, 15000);
       if (!res.ok) return null;
       const a = (await res.json()).address || {};
       const road = a.road || a.pedestrian || a.footway;
@@ -164,18 +190,24 @@
   }
   async function runNames(onDone) {
     nameBusy = true;
-    while (nameQueue.length) {
-      const q = nameQueue.shift();
-      let name = await crossingName(q);
-      if (!name || name.indexOf(' / ') < 0) {
-        // keine Querstraße gefunden (z. B. Fußgängerampel): Straße mit Hausnummer
-        await new Promise((r) => setTimeout(r, 1100));
-        name = (await streetWithNumber(q)) || name;
+    try {
+      while (nameQueue.length) {
+        const batch = nameQueue.splice(0, 25);
+        const found = (await crossingNames(batch)) || {};
+        for (const q of batch) if (found[q.signal] && found[q.signal].indexOf(' / ') > 0) names[q.signal] = found[q.signal];
+        store.set('names2', names);
+        if (onDone) onDone();
+        // ohne Querstraße (z. B. Fußgängerampel): Straße mit Hausnummer, höchstens eine Anfrage pro Sekunde
+        for (const q of batch) {
+          if (names[q.signal]) continue;
+          await new Promise((r) => setTimeout(r, 1100));
+          const n = (await streetWithNumber(q)) || found[q.signal];
+          if (n) { names[q.signal] = n; store.set('names2', names); if (onDone) onDone(); }
+        }
       }
-      if (name) { names[q.signal] = name; store.set('names2', names); if (onDone) onDone(); }
-      await new Promise((r) => setTimeout(r, 1100));
+    } finally {
+      nameBusy = false;
     }
-    nameBusy = false;
   }
 
   // ---------- Aufzeichnung ----------
