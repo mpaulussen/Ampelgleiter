@@ -2,17 +2,17 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.7.0';
+  const VERSION = '0.8.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
   // Schwellen je Verkehrsmittel: unter stopV gilt als stehend, über goV als fahrend (m/s)
   const MODES = {
-    auto: { label: 'Auto',      stopV: 1.4,  goV: 2.5, haltRadius: 70, passRadius: 25 },
-    rad:  { label: 'Rad',       stopV: 0.9,  goV: 1.8, haltRadius: 40, passRadius: 20 },
-    bus:  { label: 'Bus',       stopV: 1.4,  goV: 2.5, haltRadius: 70, passRadius: 25 },
-    bahn: { label: 'Stadtbahn', stopV: 1.4,  goV: 2.5, haltRadius: 60, passRadius: 25 },
-    fuss: { label: 'Zu Fuß',    stopV: 0.35, goV: 0.8, haltRadius: 30, passRadius: 18 }
+    auto: { label: 'Auto',      stopV: 1.4,  goV: 2.5, haltRadius: 70, passRadius: 25, vRef: 13.9 },
+    rad:  { label: 'Rad',       stopV: 0.9,  goV: 1.8, haltRadius: 40, passRadius: 20, vRef: 5.5 },
+    bus:  { label: 'Bus',       stopV: 1.4,  goV: 2.5, haltRadius: 70, passRadius: 25, vRef: 13.9 },
+    bahn: { label: 'Stadtbahn', stopV: 1.4,  goV: 2.5, haltRadius: 60, passRadius: 25, vRef: 13.9 },
+    fuss: { label: 'Zu Fuß',    stopV: 0.35, goV: 0.8, haltRadius: 30, passRadius: 18, vRef: 1.3 }
   };
   const STOP_CONFIRM_MS = 3000;   // so lange langsam, bis ein Halt zählt
   const GO_CONFIRM_MS = 2000;     // so lange schneller, bis der Halt endet
@@ -33,6 +33,16 @@
   const RESTART_L = 0.02;         // Mehrverbrauch je Wiederanfahren auf etwa 50 km/h, Liter
   const IDLE_KWH_PER_H = 0.5;     // E-Auto im Stand (Heizung, Elektronik), kWh je Stunde
   const RESTART_KWH = 0.03;       // E-Auto je Wiederanfahren, kWh (mit Rückgewinnung)
+  // Flow-Raster: Felder von etwa 150 × 150 m
+  const CELL_LAT = 0.00135, CELL_LON = 0.0022;
+  const WINDOWS = [
+    { id: 'all', label: 'Alle Zeiten' },
+    { id: 'wd-morning', label: 'Werktags 6–9 Uhr' },
+    { id: 'wd-day', label: 'Werktags 9–16 Uhr' },
+    { id: 'wd-evening', label: 'Werktags 16–19 Uhr' },
+    { id: 'night', label: 'Abends und nachts (19–6 Uhr)' },
+    { id: 'weekend', label: 'Wochenende 6–19 Uhr' }
+  ];
   const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
   // ---------- Speicher ----------
@@ -232,6 +242,7 @@
       recentPass: {},       // Kreuzung -> Zeit der letzten Durchfahrt
       lastHaltAt: {},       // Kreuzung -> Endzeit des letzten Halts
       lastFetchAt: 0,
+      cells: {},            // Flow-Raster: Feld|Zeitfenster -> Zeit, Stillstand, Tempo-Anteil
       st: { moving: 0, steady: 0, steadyBase: 0, brakes: 0, accels: 0, win: [], lastVs: null, lastBrake: 0, lastAccel: 0 },
       gpsCount: 0,
       startedAt: Date.now()
@@ -287,7 +298,7 @@
     const recentV = rec.samples.slice(-2).map((s) => s.v).concat(v).sort((a, b) => a - b);
     const vs = recentV[Math.floor(recentV.length / 2)];
     p.v = v;
-    if (prev) updateDrivingStats(vs, t, (t - prev.t) / 1000);
+    if (prev) { updateDrivingStats(vs, t, (t - prev.t) / 1000); updateCells(p, vs, t, (t - prev.t) / 1000, dist(prev, p)); }
     rec.st.lastVs = vs;
     const heading = currentHeading(p);
     rec.samples.push(p);
@@ -330,6 +341,33 @@
   }
 
   // Fahrstil für die Fahrtbilanz: Fahrzeit in Bewegung, Gleichmäßigkeit, starke Manöver
+  const cellKey = (lat, lon) => Math.floor(lat / CELL_LAT) + '_' + Math.floor(lon / CELL_LON);
+  function cellCenter(key) {
+    const [i, j] = key.split('_').map(Number);
+    return { lat: (i + 0.5) * CELL_LAT, lon: (j + 0.5) * CELL_LON };
+  }
+  function cellBounds(key) {
+    const [i, j] = key.split('_').map(Number);
+    return [[i * CELL_LAT, j * CELL_LON], [(i + 1) * CELL_LAT, (j + 1) * CELL_LON]];
+  }
+  function timeWindow(t) {
+    const d = new Date(t), h = d.getHours(), wd = d.getDay() >= 1 && d.getDay() <= 5;
+    if (h >= 19 || h < 6) return 'night';
+    if (!wd) return 'weekend';
+    if (h < 9) return 'wd-morning';
+    if (h < 16) return 'wd-day';
+    return 'wd-evening';
+  }
+  // Pro Feld nur Summen speichern, nicht den Weg selbst
+  function updateCells(p, vs, t, dt, d) {
+    if (!(dt > 0 && dt <= 5)) return;
+    const k = cellKey(p.lat, p.lon) + '|' + timeWindow(t);
+    const c = rec.cells[k] || (rec.cells[k] = { t: 0, s: 0, r: 0, d: 0 });
+    c.t += dt; c.d += d;
+    if (vs < rec.cfg.stopV) c.s += dt;
+    c.r += dt * Math.min(1, vs / rec.cfg.vRef);
+  }
+
   function updateDrivingStats(vs, t, dt) {
     const st = rec.st;
     if (!(dt > 0 && dt <= 5)) { st.win = []; return; }   // Lücken (App im Hintergrund) nicht werten
@@ -528,6 +566,15 @@
       trip.events = trip.events.filter((e) => dist(e, rec.first) > cut && dist(e, rec.last) > cut);
     }
     trip.distance = Math.round(trip.distance);
+    trip.cells = Object.keys(rec.cells).map((key) => {
+      const [k, w] = key.split('|'), c = rec.cells[key];
+      return { k, w, t: Math.round(c.t), s: Math.round(c.s), r: Math.round(c.r * 10) / 10, d: Math.round(c.d) };
+    }).filter((c) => {
+      if (c.t < 3) return false;
+      if (!cut || !rec.first || !rec.last) return true;
+      const m = cellCenter(c.k);
+      return dist(m, rec.first) > cut + 100 && dist(m, rec.last) > cut + 100;   // Datenschutz wie bei den Ereignissen
+    });
     const st = rec.st;
     trip.stats = {
       movingMs: Math.round(st.moving),
@@ -790,6 +837,87 @@
 
   // ---------- Karte ----------
   let map = null, layer = null;
+  let mapMode = 'signals', mapWindow = 'all', mapFitted = false;
+
+  // Flow-Wert je Feld (0–100): Mittel aus Tempo-Anteil, Anteil ohne Stillstand, Ampel-Wartezeit und Bewertungen
+  function aggregateGrid(list, win) {
+    const g = {};
+    const get = (k) => g[k] || (g[k] = { k, trips: new Set(), t: 0, s: 0, r: 0, d: 0, n: 0, wait: 0, halts: 0, up: 0, down: 0, signals: new Set() });
+    for (const tr of list) {
+      for (const c of tr.cells || []) {
+        if (win !== 'all' && c.w !== win) continue;
+        const a = get(c.k); a.trips.add(tr.id); a.t += c.t; a.s += c.s; a.r += c.r; a.d += c.d;
+      }
+      for (const e of tr.events) {
+        if (!e.signal || (win !== 'all' && timeWindow(e.t) !== win)) continue;
+        const a = get(cellKey(e.lat, e.lon)); a.trips.add(tr.id); a.n++; a.signals.add(e.signal);
+        if (!a.sig) a.sig = { signal: e.signal, lat: e.lat, lon: e.lon };
+        if (e.type === 'halt') { a.halts++; a.wait += e.wait; }
+        if (e.rating === 1) a.up++;
+        if (e.rating === -1) a.down++;
+      }
+    }
+    for (const a of Object.values(g)) {
+      const parts = [];
+      if (a.t >= 5) { parts.push(a.r / a.t); parts.push(1 - a.s / a.t); }
+      if (a.n) parts.push(1 - Math.min(1, a.wait / a.n / 60000));   // 60 s Ø Wartezeit je Durchfahrt = 0
+      if (a.up + a.down) parts.push(a.up / (a.up + a.down));
+      a.flow = parts.length ? Math.round(100 * parts.reduce((x, y) => x + y, 0) / parts.length) : null;
+      a.count = a.trips.size;
+    }
+    return Object.values(g).filter((a) => a.flow != null);
+  }
+  function flowColor(f) { return waitColor(45 * (1 - f / 100)); }   // gleiche Farbskala: grün fließt, rot hakt
+  function cellLabel(a) {
+    if (a.signals.size) { const sig = [...a.signals][0]; const nm = names[sig] || oldNames[sig]; if (nm) return nm; }
+    const key = 'g' + a.k;
+    return names[key] || 'Feld bei ' + cellCenter(a.k).lat.toFixed(4) + ', ' + cellCenter(a.k).lon.toFixed(4);
+  }
+  function gridInsights(list) {
+    const out = [];
+    const all = aggregateGrid(list, 'all').filter((a) => a.count >= 2).sort((x, y) => x.flow - y.flow);
+    for (const a of all.slice(0, 3)) if (a.flow < 70) out.push(`<li><strong>${esc(cellLabel(a))}</strong>: Flow ${a.flow} aus ${a.count} Fahrten${a.halts ? `, ${a.halts}× an der Ampel gehalten` : ''}.</li>`);
+    // Zeitvergleich: dasselbe Feld in verschiedenen Zeitfenstern
+    const per = {};
+    for (const w of WINDOWS.slice(1)) for (const a of aggregateGrid(list, w.id)) (per[a.k] = per[a.k] || []).push({ w, a });
+    // nur Zeitfenster mit mindestens zwei Fahrten vergleichen, sonst ist es Zufall
+    for (const k of Object.keys(per)) per[k] = per[k].filter((x) => x.a.count >= 2);
+    const cmp = Object.values(per).filter((x) => x.length >= 2).map((x) => {
+      x.sort((p, q) => q.a.flow - p.a.flow);
+      return { best: x[0], worst: x[x.length - 1], gap: x[0].a.flow - x[x.length - 1].a.flow };
+    }).filter((c) => c.gap >= 15).sort((p, q) => q.gap - p.gap).slice(0, 2);
+    for (const c of cmp) out.push(`<li><strong>${esc(cellLabel(c.best.a))}</strong>: ${esc(c.best.w.label)} fließt es besser (Flow ${c.best.a.flow}) als ${esc(c.worst.w.label)} (Flow ${c.worst.a.flow}).</li>`);
+    return out;
+  }
+  function renderInsights() {
+    const ins = gridInsights(trips);
+    $('#map-insights').innerHTML = ins.length
+      ? `<h3>Was dein Raster zeigt</h3><ul>${ins.join('')}</ul>`
+      : '<p class="small muted">Erkenntnisse erscheinen, sobald du Orte mehrmals durchfahren hast.</p>';
+  }
+  function drawGrid() {
+    const cells = aggregateGrid(trips, mapWindow);
+    const pts = [];
+    for (const a of cells) {
+      const col = flowColor(a.flow);
+      const op = Math.min(0.65, 0.2 + a.count * 0.09);   // mehr Fahrten, kräftigere Farbe
+      const speed = a.t >= 5 ? Math.round(a.d / a.t * 3.6) : null;
+      L.rectangle(cellBounds(a.k), { color: col, weight: 1, fillColor: col, fillOpacity: op })
+        .bindPopup(`<strong>${esc(cellLabel(a))}</strong><br>Flow ${a.flow} von 100 · ${a.count} Fahrt${a.count === 1 ? '' : 'en'}${a.count < 5 ? ' (noch kein sicheres Muster)' : ''}`
+          + (speed != null ? `<br>Ø ${speed} km/h, ${fmtPct(a.s / a.t)} der Zeit Stillstand` : '')
+          + (a.n ? `<br>Ampeln: ${a.halts} von ${a.n} mit Halt, Ø ${Math.round(a.wait / a.n / 1000)} s Wartezeit` : '')
+          + (a.up || a.down ? `<br>Bewertung: ${a.up} gut, ${a.down} schlecht` : ''))
+        .addTo(layer);
+      pts.push(cellCenter(a.k));
+    }
+    $('#map-empty').hidden = cells.length > 0;
+    $('#map-empty').textContent = 'Für dieses Zeitfenster gibt es noch keine Daten.';
+    renderInsights();
+    // Namen für Felder ohne Ampel nachladen
+    const wanted = cells.slice(0, 60).map((a) => a.sig || Object.assign({ signal: 'g' + a.k }, cellCenter(a.k)));
+    requestNames(wanted, () => { if (mapMode === 'grid' && !$('#view-map').hidden) renderInsights(); });   // Karte nicht neu zeichnen, damit offene Infofenster bleiben
+    return pts.map((p) => [p.lat, p.lon]);
+  }
   function waitColor(s) {
     const stops = [[0, [46, 158, 106]], [20, [224, 163, 38]], [45, [214, 69, 47]]];
     let a = stops[0], b = stops[stops.length - 1];
@@ -801,6 +929,7 @@
     const ag = aggregate(trips);
     const empty = !ag.per.length;
     $('#map-empty').hidden = !empty;
+    $('#map-empty').textContent = 'Noch keine Halte aufgezeichnet.';
     if (typeof L === 'undefined') { $('#map-empty').hidden = false; $('#map-empty').textContent = 'Die Karte braucht eine Internetverbindung.'; return; }
     if (!map) {
       map = L.map('map', { zoomControl: true });
@@ -810,6 +939,19 @@
     setTimeout(() => map.invalidateSize(), 50);
     if (layer) layer.remove();
     layer = L.layerGroup().addTo(map);
+    $('#map-legend').textContent = mapMode === 'grid'
+      ? 'Jedes Feld ist etwa 150 × 150 m groß. Grün: es fließt, rot: es hakt. Je kräftiger die Farbe, desto mehr Fahrten stehen dahinter. Tippe auf ein Feld für die Werte.'
+      : 'Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang. Tippe auf einen Kreis für die Werte je Fahrtrichtung.';
+    $('#map-window').hidden = mapMode !== 'grid';
+    $('#map-insights').hidden = mapMode !== 'grid';
+    if (mapMode === 'grid') {
+      const gp = drawGrid();
+      mapHasData = gp.length > 0;
+      if (gp.length && !mapFitted) { map.fitBounds(gp, { padding: [30, 30], maxZoom: 16 }); mapFitted = true; }
+      startMyLocation();
+      return;
+    }
+    mapFitted = false;
     const pts = [];
     for (const a of ag.per) {
       const n = a.halts + a.passes;
@@ -855,6 +997,15 @@
   function stopMyLocation() {
     if (meWatch != null) { navigator.geolocation.clearWatch(meWatch); meWatch = null; }
   }
+  $('#map-mode').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-mode]');
+    if (!b) return;
+    mapMode = b.dataset.mode; mapFitted = false;
+    $$('#map-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    renderMap();
+  });
+  $('#map-window').innerHTML = WINDOWS.map((w) => `<option value="${w.id}">${esc(w.label)}</option>`).join('');
+  $('#map-window').addEventListener('change', (ev) => { mapWindow = ev.target.value; renderMap(); });
   $('#btn-locate').addEventListener('click', () => {
     if (meMarker) map.setView(meMarker.getLatLng(), 16);
     else { meCenterNext = true; startMyLocation(); }

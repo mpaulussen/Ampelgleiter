@@ -92,11 +92,17 @@
   <!-- Karte -->
   <section id="view-map" class="view view-map" hidden aria-labelledby="h-map">
     <h2 id="h-map">Deine Warte-Wolke</h2>
-    <p class="lead small">Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang. Tippe auf einen Kreis für die Werte je Fahrtrichtung.</p>
+    <div class="seg" id="map-mode" role="group" aria-label="Ansicht der Karte">
+      <button type="button" data-mode="signals" aria-pressed="true">Ampeln</button>
+      <button type="button" data-mode="grid" aria-pressed="false">Flow-Raster</button>
+    </div>
+    <select id="map-window" aria-label="Zeitfenster" hidden></select>
+    <p class="lead small" id="map-legend"></p>
     <button id="btn-locate" class="btn" type="button">Zu meinem Standort</button>
     <p id="map-loc-msg" class="msg" role="status" aria-live="polite"></p>
     <div id="map" role="region" aria-label="Karte der Ampeln mit deinen Wartezeiten"></div>
     <p id="map-empty" class="msg" hidden>Noch keine Halte aufgezeichnet.</p>
+    <div id="map-insights" class="card insights" hidden></div>
   </section>
 
   <!-- Mehr -->
