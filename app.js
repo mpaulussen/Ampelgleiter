@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.1';
+  const VERSION = '0.7.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -28,6 +28,11 @@
   const STEADY_TOL = 1.39;        // ±5 km/h um das Mittel der letzten Minute
   const HARD_BRAKE = -3.0;        // starke Bremsung ab 3 m/s² Verzögerung
   const HARD_ACCEL = 2.5;         // starkes Beschleunigen ab 2,5 m/s²
+  // Schätzwerte für die Kosten der Ampelhalte (offen angezeigt)
+  const IDLE_L_PER_H = 0.8;       // Leerlauf Verbrenner, Liter je Stunde
+  const RESTART_L = 0.02;         // Mehrverbrauch je Wiederanfahren auf etwa 50 km/h, Liter
+  const IDLE_KWH_PER_H = 0.5;     // E-Auto im Stand (Heizung, Elektronik), kWh je Stunde
+  const RESTART_KWH = 0.03;       // E-Auto je Wiederanfahren, kWh (mit Rückgewinnung)
   const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
   // ---------- Speicher ----------
@@ -36,7 +41,7 @@
     set(k, v) { try { localStorage.setItem('ww.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   };
   let trips = store.get('trips', []);
-  let settings = Object.assign({ mode: 'auto', cut: 200 }, store.get('settings', {}));
+  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35 }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
   let names = store.get('names2', {});   // 'names2': Namen mit Querstraße (ab 0.6.0)
   const oldNames = store.get('names', {}); // nur Straße (bis 0.5.0), als Übergang bis die neuen Namen da sind
@@ -562,6 +567,33 @@
     requestNames(halts, renderReview);
   }
   const fmtNum = (x, d) => x.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const fmtEuro = (x) => x.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 });
+  // Kosten einer Autofahrt: Sprit oder Strom (nur mit Verbrauchsangabe) und geschätzte Kosten der Ampelhalte
+  function tripCosts(t) {
+    if (t.mode !== 'auto') return null;
+    const unit = t.consumption ? t.consumption.unit : 'l';
+    const price = unit === 'kWh' ? settings.powerPrice : settings.fuelPrice;
+    const halts = t.events.filter((e) => e.type === 'halt' && e.signal);
+    const waitH = halts.reduce((a, e) => a + e.wait, 0) / 3600000;
+    const stops = halts.reduce((a, e) => a + (e.halts || 1), 0);
+    const amount = unit === 'kWh' ? waitH * IDLE_KWH_PER_H + stops * RESTART_KWH : waitH * IDLE_L_PER_H + stops * RESTART_L;
+    const energy = t.consumption ? t.distance / 1000 * t.consumption.value / 100 * price : null;
+    return { unit, price, energy, halts: amount * price, amount, stops };
+  }
+  function costHtml(t) {
+    const c = tripCosts(t);
+    if (!c) return '';
+    const what = c.unit === 'kWh' ? 'Strom' : 'Sprit';
+    const lines = [];
+    lines.push(c.energy != null
+      ? `<p><strong>${what} für diese Fahrt: ${fmtEuro(c.energy)}</strong></p>`
+      : `<p class="small">Trag den Verbrauch ein, dann rechnet die App die ${what}kosten der Fahrt aus.</p>`);
+    lines.push(c.stops
+      ? `<p>Deine Ampelhalte: ca. ${fmtEuro(c.halts)} (${c.stops} Halt${c.stops === 1 ? '' : 'e'}, ${fmtNum(c.amount, 2)} ${c.unit === 'kWh' ? 'kWh' : 'l'})</p>`
+      : '<p>Keine Ampelhalte, also auch keine Kosten fürs Warten.</p>');
+    lines.push(`<p class="small muted">Schätzung mit ${fmtEuro(c.price)} je ${c.unit === 'kWh' ? 'kWh' : 'Liter'} (änderbar unter „Mehr“), ${c.unit === 'kWh' ? `${fmtNum(IDLE_KWH_PER_H, 1)} kWh je Stunde im Stand und ${fmtNum(RESTART_KWH, 2)} kWh` : `${fmtNum(IDLE_L_PER_H, 1)} l je Stunde Leerlauf und ${fmtNum(RESTART_L, 2)} l`} je Wiederanfahren.</p>`);
+    return lines.join('');
+  }
   function renderBilanz() {
     const t = reviewTrip;
     const st = t.stats || {};
@@ -588,16 +620,18 @@
         </select>
       </div>
       <p id="cons-msg" class="small muted" role="status" aria-live="polite"></p>
+      <div id="bilanz-costs" class="costs">${costHtml(t)}</div>
     </div>`;
     const save = () => {
       const raw = $('#inp-consumption').value.trim().replace(',', '.');
       const unit = $('#inp-unit').value;
-      if (!raw) { delete reviewTrip.consumption; saveTrips(); $('#cons-msg').textContent = ''; return; }
+      if (!raw) { delete reviewTrip.consumption; saveTrips(); $('#cons-msg').textContent = ''; $('#bilanz-costs').innerHTML = costHtml(reviewTrip); return; }
       const val = Number(raw);
       if (!isFinite(val) || val <= 0 || val > 60) { $('#cons-msg').textContent = 'Bitte eine Zahl wie 5,6 eingeben.'; return; }
       reviewTrip.consumption = { value: Math.round(val * 10) / 10, unit };
       saveTrips();
       $('#cons-msg').textContent = `Gespeichert: ${fmtNum(reviewTrip.consumption.value, 1)} ${unit}/100 km.`;
+      $('#bilanz-costs').innerHTML = costHtml(reviewTrip);
     };
     $('#inp-consumption').addEventListener('change', save);
     $('#inp-unit').addEventListener('change', save);
@@ -684,6 +718,17 @@
     return { per: all, approaches, wait, halts, passes };
   }
   const dirShort = (h) => (h == null ? '–' : DIRS[Math.round(h / 45) % 8]);
+  function costSummary(list) {
+    const cs = list.map(tripCosts).filter(Boolean);
+    if (!cs.length) return '';
+    const halts = cs.reduce((a, c) => a + c.halts, 0);
+    const withEnergy = cs.filter((c) => c.energy != null);
+    const energy = withEnergy.reduce((a, c) => a + c.energy, 0);
+    return `<div class="card"><h3>Kosten (geschätzt)</h3>
+      <p>Ampelhalte: <strong>${fmtEuro(halts)}</strong> bei ${cs.length} Autofahrt${cs.length === 1 ? '' : 'en'}</p>
+      ${withEnergy.length ? `<p>Sprit und Strom: <strong>${fmtEuro(energy)}</strong> bei ${withEnergy.length} Fahrt${withEnergy.length === 1 ? '' : 'en'} mit Verbrauchsangabe</p>` : '<p class="small">Für Sprit- und Stromkosten den Verbrauch in der Fahrtbilanz eintragen.</p>'}
+    </div>`;
+  }
   function renderStats() {
     const since = statsRange === 'week' ? weekStart() : 0;
     const list = trips.filter((t) => t.start >= since);
@@ -703,7 +748,7 @@
     }).join('');
     const tripRows = list.slice().sort((a, b) => b.start - a.start).map((t) => {
       const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-      return `<div class="trip"><span>${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}</span></span>
+      return `<div class="trip"><span>${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}${(() => { const c = tripCosts(t); return c && c.energy != null ? ` · ${fmtEuro(c.energy)}` : ''; })()}</span></span>
         <span><button type="button" data-review="${t.id}">Ansehen</button> <button type="button" data-del="${t.id}">Löschen</button></span></div>`;
     }).join('');
     body.innerHTML = `
@@ -713,6 +758,7 @@
         <div class="kpi"><b>${fmtPct(share)}</b><span>der Ampeln mit Halt</span></div>
         <div class="kpi"><b>${ag.halts ? fmtS(ag.wait / ag.halts) : '–'}</b><span>Ø Wartezeit je Halt</span></div>
       </div>
+      ${costSummary(list)}
       ${worst ? `<div class="card worst"><h3>Deine nervigste Ampel</h3><p><strong>${esc(labelFor(worst.sample))}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><p class="small">${worst.halts}× gehalten, zusammen ${fmtDur(worst.wait)} min, längster Halt ${fmtDur(worst.maxWait)} min.</p></div>` : ''}
       <h3>Alle Ampeln</h3>
       <div class="tbl-wrap"><table><thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -953,11 +999,24 @@
     );
   });
   $('#inp-cut').addEventListener('change', (ev) => { settings.cut = Number(ev.target.value); store.set('settings', settings); });
+  function bindPrice(id, key) {
+    $(id).addEventListener('change', (ev) => {
+      const v = Number(ev.target.value.trim().replace(',', '.'));
+      if (!isFinite(v) || v <= 0 || v > 10) { moreMsg('Bitte einen Preis wie 1,75 eingeben.'); ev.target.value = fmtNum(settings[key], 2); return; }
+      settings[key] = Math.round(v * 100) / 100; store.set('settings', settings);
+      ev.target.value = fmtNum(settings[key], 2);
+      moreMsg('Preis gespeichert.');
+    });
+  }
+  bindPrice('#inp-fuel', 'fuelPrice');
+  bindPrice('#inp-power', 'powerPrice');
 
   // ---------- Start ----------
   const modeInput = $(`input[name="mode"][value="${settings.mode}"]`);
   if (modeInput) modeInput.checked = true;
   $('#inp-cut').value = String(settings.cut);
+  $('#inp-fuel').value = fmtNum(settings.fuelPrice, 2);
+  $('#inp-power').value = fmtNum(settings.powerPrice, 2);
   $('#app-version').textContent = VERSION;
   $('.proto').textContent = 'Prototyp ' + VERSION;   // zeigt zugleich: das Programm läuft
   clusters = buildClusters(signalCache.nodes);
