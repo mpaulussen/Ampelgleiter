@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.9.0';
+  const VERSION = '0.10.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -29,6 +29,8 @@
   const GAP_MS = 15000;           // so lange ohne brauchbaren GPS-Punkt: Empfangslücke, z. B. im Tunnel
   const AREA_RADIUS = 5000;       // Umkreis für das Laden der Ampeln
   const TAGS = ['zu lange gewartet', 'Grün zu kurz', 'unübersichtlich', 'Anschluss verpasst', 'alles gut'];
+  const ACC_TAGS = ['Grün zu kurz zum Queren', 'kein Tonsignal', 'Taster schlecht erreichbar', 'Bordstein zu hoch'];   // Profil barrierefrei
+  const ACCESS_LABEL = { rollstuhl: 'Rollstuhl', rollator: 'Rollator oder langsames Gehen', sehen: 'Sehbehinderung', andere: 'andere Einschränkung' };
   const STEADY_MIN_V = 8.33;      // Gleichmäßigkeit zählt ab 30 km/h
   const STEADY_TOL = 1.39;        // ±5 km/h um das Mittel der letzten Minute
   const HARD_BRAKE = -3.0;        // starke Bremsung ab 3 m/s² Verzögerung
@@ -56,9 +58,10 @@
     set(k, v) { try { localStorage.setItem('ww.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   };
   let trips = store.get('trips', []);
-  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35 }, store.get('settings', {}));
+  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35, access: { on: false, type: 'rollator' } }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
-  if (!signalCache.stops) { signalCache.stops = {}; signalCache.areas = []; }   // Haltestellen ab 0.9.0: Gebiete einmal neu laden
+  // Haltestellen ab 0.9.0, Angaben zur Barrierefreiheit ab 0.10.0: Gebiete einmal neu laden
+  if (!signalCache.stops || !signalCache.acc) { signalCache.stops = signalCache.stops || {}; signalCache.acc = {}; signalCache.areas = []; }
   let names = store.get('names3', {});   // 'names3': Querstraßen ohne Bahnsteignamen (ab 0.9.0)
   const names2 = store.get('names2', {}); // mit Querstraße (0.6.0 bis 0.8.0)
   const oldNames = store.get('names', {}); // nur Straße (bis 0.5.0), als Übergang bis die neuen Namen da sind
@@ -110,6 +113,11 @@
     }
     return out.map((g) => g.pts);
   }
+  // Tonsignal oder Vibration an einer Kreuzung: ja, sobald ein Signal es hat; nein nur, wenn es eingetragen ist
+  function accFlag(part, k) {
+    const vals = part.map((p) => (signalCache.acc[p.id] || {})[k]).filter(Boolean);
+    return vals.some((v) => v !== 'no') ? 'yes' : vals.length ? 'no' : null;
+  }
   function buildClusters(nodes) {
     const pts = Object.keys(nodes).sort((a, b) => Number(a) - Number(b)).map((id) => ({ id, lat: nodes[id][0], lon: nodes[id][1] }));
     // Verketten: Standorte bis CLUSTER_M zueinander gehören zusammen, auch über mehrere Ecken einer großen Kreuzung
@@ -133,7 +141,8 @@
       const m = { lat: g.reduce((x, p) => x + p.lat, 0) / g.length, lon: g.reduce((x, p) => x + p.lon, 0) / g.length };
       const parts = g.every((p) => dist(p, m) <= CLUSTER_MAX_M) ? [g] : greedyGroups(g);   // zu lange Ketten wieder aufteilen
       for (const part of parts) {
-        const c = { id: 'c' + part[0].id, lat: part.reduce((x, p) => x + p.lat, 0) / part.length, lon: part.reduce((x, p) => x + p.lon, 0) / part.length, n: part.length };
+        const c = { id: 'c' + part[0].id, lat: part.reduce((x, p) => x + p.lat, 0) / part.length, lon: part.reduce((x, p) => x + p.lon, 0) / part.length, n: part.length,
+          sound: accFlag(part, 's'), vib: accFlag(part, 'v') };
         list.push(c); clusterById[c.id] = c;
         for (const p of part) alias['c' + p.id] = c.id;
       }
@@ -167,7 +176,13 @@
         for (const el of json.elements || []) {
           if (el.type !== 'node') continue;
           const tg = el.tags || {};
-          if (tg.highway === 'traffic_signals' || tg.crossing === 'traffic_signals') { signalCache.nodes[el.id] = [round5(el.lat), round5(el.lon)]; n++; }
+          if (tg.highway === 'traffic_signals' || tg.crossing === 'traffic_signals') {
+            signalCache.nodes[el.id] = [round5(el.lat), round5(el.lon)]; n++;
+            const a = {};
+            if (tg['traffic_signals:sound']) a.s = tg['traffic_signals:sound'];
+            if (tg['traffic_signals:vibration']) a.v = tg['traffic_signals:vibration'];
+            if (Object.keys(a).length) signalCache.acc[el.id] = a; else delete signalCache.acc[el.id];
+          }
           else signalCache.stops[el.id] = [round5(el.lat), round5(el.lon)];
         }
         signalCache.areas = signalCache.areas.filter((a) => dist(a, p) > 1000);
@@ -629,13 +644,14 @@
   });
 
   function startTrip() {
-    const mode = $('input[name="mode"]:checked').value;
+    const mode = selectedMode();
     settings.mode = mode; store.set('settings', settings);
     const msg = $('#start-msg');
     if (!('geolocation' in navigator)) { msg.textContent = 'Dieses Gerät bietet keinen Standortzugriff.'; return; }
     if (!window.isSecureContext) { msg.textContent = 'Standort geht nur über eine sichere Verbindung (https).'; return; }
     msg.textContent = 'Standort wird angefragt …';
     rec = newRecording(mode);
+    if (settings.access.on) rec.trip.access = settings.access.type;   // Wartezeiten mit Einschränkung getrennt auswertbar
     rec.watchId = navigator.geolocation.watchPosition(
       (p) => { if (rec && rec.gpsCount === 0) { msg.textContent = ''; } onPosition(p); },
       (err) => {
@@ -822,6 +838,7 @@
   function renderReview() {
     if (!reviewTrip) return;
     const halts = reviewTrip.events.filter((e) => e.type === 'halt' && e.signal);
+    const tagList = reviewTrip.access || settings.access.on ? TAGS.concat(ACC_TAGS) : TAGS;
     $('#review-list').innerHTML = halts.map((e, i) => {
       const idx = reviewTrip.events.indexOf(e);
       const tags = e.tags || [];
@@ -832,7 +849,7 @@
           <button type="button" class="btn up" data-rate="1" aria-pressed="${e.rating === 1}">Gut</button>
           <button type="button" class="btn down" data-rate="-1" aria-pressed="${e.rating === -1}">Schlecht</button>
         </div>
-        <div class="tags" role="group" aria-label="Stichworte">${TAGS.map((t) => `<button type="button" data-tag="${esc(t)}" aria-pressed="${tags.includes(t)}">${esc(t)}</button>`).join('')}</div>
+        <div class="tags" role="group" aria-label="Stichworte">${tagList.map((t) => `<button type="button" data-tag="${esc(t)}" aria-pressed="${tags.includes(t)}">${esc(t)}</button>`).join('')}</div>
       </article>`;
     }).join('');
   }
@@ -1099,7 +1116,7 @@
         return `${esc(dirName(d.h) || 'Richtung unbekannt')}: ${dn}× vorbei, ${fmtPct(d.halts / dn)} mit Halt, Ø ${Math.round(d.wait / dn / 1000)} s`;
       }).join('<br>');
       L.circleMarker([a.lat, a.lon], { radius: r, color: col, weight: 2, fillColor: col, fillOpacity: 0.45 })
-        .bindPopup(`<strong>${esc(labelFor(a.sample))}</strong><br>${n} Fahrten, ${fmtPct(a.halts / n)} mit Halt<br>Ø Wartezeit ${Math.round(avgAll)} s, längste ${fmtS(a.maxWait)}${a.up || a.down ? `<br>Bewertung: ${a.up} gut, ${a.down} schlecht` : ''}<br><br>${dirLines}`)
+        .bindPopup(`<strong>${esc(labelFor(a.sample))}</strong><br>${n} Fahrten, ${fmtPct(a.halts / n)} mit Halt<br>Ø Wartezeit ${Math.round(avgAll)} s, längste ${fmtS(a.maxWait)}${a.up || a.down ? `<br>Bewertung: ${a.up} gut, ${a.down} schlecht` : ''}${settings.access.on ? `<br>${esc(accText(a.signal))}` : ''}<br><br>${dirLines}`)
         .addTo(layer);
       pts.push([a.lat, a.lon]);
     }
@@ -1238,13 +1255,125 @@
     });
     if (name === 'stats') renderStats();
     if (name === 'map') renderMap();
-    if (name === 'start') renderLastTrip();
+    if (name === 'start') { renderToday(); renderLastTrip(); }
     if (name === 'more') updateSignalsInfo();
     const h = $('#view-' + name + ' h2');
     if (h && name !== 'drive') { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
     $('#main').scrollTop = 0;
   }
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
+
+  // ---------- Heute: Verkehrsmittel, eigene Wege, beste Abfahrtszeit ----------
+  const MODE_GROUP = { auto: 'auto', rad: 'rad', bus: 'oepnv', bahn: 'oepnv', fuss: 'fuss' };
+  const GROUP_WITH = { auto: 'mit dem Auto', rad: 'mit dem Rad', oepnv: 'mit Bus und Bahn', fuss: 'zu Fuß' };
+  const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+  const durText = (ms) => (ms >= 3600000 ? fmtDur(ms) : fmtDur(ms) + ' min');
+  const avgOf = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+  const tripWait = (t) => t.events.reduce((a, e) => a + (e.type === 'halt' && e.signal ? e.wait : 0), 0);
+  function selectedMode() {
+    const g = $('input[name="mgroup"]:checked').value;
+    return g === 'oepnv' ? $('input[name="pt"]:checked').value : g;
+  }
+  function setModeUI(mode) {
+    const g = MODE_GROUP[mode] || 'auto';
+    $(`input[name="mgroup"][value="${g}"]`).checked = true;
+    if (g === 'oepnv') $(`input[name="pt"][value="${mode}"]`).checked = true;
+    $('#pt-row').hidden = g !== 'oepnv';
+  }
+  function accText(id) {
+    const c = clusterById[id];
+    const w = (x) => (x === 'yes' ? 'ja' : x === 'no' ? 'nein' : 'nicht eingetragen');
+    return c ? `Tonsignal: ${w(c.sound)} · Vibration: ${w(c.vib)}` : 'Keine Angaben zur Barrierefreiheit';
+  }
+  // Wiederkehrende Wege: Fahrten mit überwiegend denselben Ampeln in ähnlicher Richtung. Alles bleibt auf dem Gerät.
+  function findRoutes(list) {
+    const groups = [];
+    for (const t of list.slice().sort((a, b) => a.start - b.start)) {
+      const ev = t.events.filter((e) => e.signal);
+      const sig = Array.from(new Set(ev.map((e) => e.signal)));
+      if (sig.length < 3) continue;
+      const first = ev[0], last = ev[ev.length - 1];
+      const dir = dist(first, last) > 200 ? bearing(first, last) : null;
+      const set = new Set(sig);
+      let g = groups.find((x) => {
+        const inter = x.sig.filter((id) => set.has(id)).length;
+        // überwiegend dieselben Ampeln; eine kürzere Fahrt auf demselben Weg zählt mit
+        const same = inter >= 3 && inter / Math.min(x.sig.length, sig.length) >= 0.7 && inter / (x.sig.length + sig.length - inter) >= 0.35;
+        return same && (x.dir == null || dir == null || angDiff(x.dir, dir) <= 60);
+      });
+      if (!g) { g = { sig, dir, first, last, trips: [] }; groups.push(g); }
+      g.trips.push(t);
+    }
+    return groups.filter((g) => g.trips.length >= 2);
+  }
+  function routeCard(g, group) {
+    const own = g.trips.filter((t) => MODE_GROUP[t.mode] === group);
+    const now = new Date().getHours();
+    let body;
+    if (own.length) {
+      const hours = {};
+      for (const t of own) { const h = new Date(t.start).getHours(); (hours[h] = hours[h] || []).push(tripWait(t)); }
+      const hs = Object.keys(hours).map(Number);
+      const nowAvg = hours[now] ? avgOf(hours[now]) : avgOf(own.map(tripWait));
+      body = `<p>Jetzt los: etwa ${durText(nowAvg)} an Ampeln</p>`;
+      if (hs.length >= 2) {
+        const best = hs.reduce((b, h) => (avgOf(hours[h]) < avgOf(hours[b]) ? h : b), hs[0]);
+        // verglichen mit jetzt, oder ohne Fahrten zu dieser Stunde mit allen anderen Abfahrtszeiten
+        const ref = hours[now] ? nowAvg : avgOf(own.filter((t) => new Date(t.start).getHours() !== best).map(tripWait));
+        if (best !== now && ref - avgOf(hours[best]) >= 30000) {
+          body += `<p class="tip">Am wenigsten gewartet hast du bei Abfahrt zwischen ${best} und ${best + 1} Uhr: Ø ${durText(avgOf(hours[best]))} statt ${durText(ref)}.</p>`;
+        }
+      }
+    } else {
+      body = `<p>${cap(GROUP_WITH[group])} bist du diesen Weg noch nicht gefahren.</p>`;
+    }
+    // Strecken-Vergleich: derselbe Weg mit verschiedenen Verkehrsmitteln
+    const byMode = {};
+    for (const t of g.trips) (byMode[MODE_GROUP[t.mode]] = byMode[MODE_GROUP[t.mode]] || []).push(t);
+    if (Object.keys(byMode).length >= 2) {
+      body += `<p class="small">${Object.keys(byMode).map((m) => `${cap(GROUP_WITH[m])}: Ø ${durText(avgOf(byMode[m].map((t) => t.end - t.start)))} unterwegs, ${durText(avgOf(byMode[m].map(tripWait)))} an Ampeln`).join('<br>')}</p>`;
+    }
+    return `<div class="card"><p class="kicker">Dein Weg · ${g.trips.length} Fahrten</p><h3>${esc(labelFor(g.first))} → ${esc(labelFor(g.last))}</h3>${body}</div>`;
+  }
+  function modeCard(group) {
+    const since = Date.now() - 30 * 864e5;
+    const ts = trips.filter((t) => !t.demo && MODE_GROUP[t.mode] === group && t.start >= since);
+    const head = `<h3>${cap(GROUP_WITH[group])} in den letzten 30 Tagen</h3>`;
+    const later = group === 'oepnv' ? '<p class="small muted">Abfahrten und Verspätungen von moBiel zeigt Flowtown, sobald eine Datenquelle angebunden ist.</p>' : '';
+    if (!ts.length) return `<div class="card">${head}<p class="small">Noch keine Fahrt. Starte unten deine erste Aufzeichnung.</p>${later}</div>`;
+    const km = ts.reduce((a, t) => a + t.distance, 0) / 1000;
+    const halts = ts.reduce((a, t) => a + t.events.filter((e) => e.type === 'halt' && e.signal).length, 0);
+    const wait = ts.reduce((a, t) => a + tripWait(t), 0);
+    let extra = '';
+    if (group === 'oepnv') {
+      const atStops = ts.reduce((a, t) => a + t.events.reduce((b, e) => b + (e.atStop ? e.wait : 0), 0), 0);
+      extra = `<p class="small">${atStops ? `An Haltestellen ${durText(atStops)}, an Ampeln ${durText(wait)}. ` : ''}Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</p>`;
+    }
+    return `<div class="card">${head}<p class="small">${ts.length} Fahrt${ts.length === 1 ? '' : 'en'}, ${fmtNum(km, 1)} km · ${fmtNum(km ? halts / km : 0, 1)} Ampelhalte je km · Ø ${durText(wait / ts.length)} an Ampeln je Fahrt</p>${extra}${later}</div>`;
+  }
+  function accessCard() {
+    const ids = new Set();
+    for (const t of trips) for (const e of t.events) if (e.signal && !e.signal.startsWith('demo')) ids.add(e.signal);
+    let yes = 0, no = 0, unk = 0;
+    for (const id of ids) { const c = clusterById[id]; if (c && c.sound === 'yes') yes++; else if (c && c.sound === 'no') no++; else unk++; }
+    return `<div class="card"><h3>Barrierefrei unterwegs</h3>
+      <p class="small">${ids.size ? `Von ${ids.size} Ampeln auf deinen Wegen haben laut OpenStreetMap ${yes} ein Tonsignal, ${no} keins. Bei ${unk} fehlt die Angabe.` : 'Nach den ersten Fahrten siehst du hier, welche Ampeln auf deinen Wegen ein Tonsignal haben.'}</p>
+      <p class="small">Nach jeder Fahrt gibt es zusätzliche Stichworte wie „Grün zu kurz zum Queren“. Deine Fahrten tragen den Hinweis „${esc(ACCESS_LABEL[settings.access.type])}“, damit sich Wartezeiten mit Einschränkung getrennt auswerten lassen. Das bleibt auf deinem Gerät.</p></div>`;
+  }
+  function renderToday() {
+    const group = MODE_GROUP[selectedMode()];
+    const now = new Date().getHours();
+    const hourGap = (g) => Math.min(...g.trips.map((t) => { const d = Math.abs(new Date(t.start).getHours() - now); return Math.min(d, 24 - d); }));
+    const own = (g) => g.trips.filter((t) => MODE_GROUP[t.mode] === group).length;
+    let routes = findRoutes(trips.filter((t) => !t.demo)).sort((a, b) => own(b) - own(a) || hourGap(a) - hourGap(b));
+    if (routes.some(own)) routes = routes.filter(own);   // Wege mit anderen Verkehrsmitteln nur, solange es keine eigenen gibt
+    const html = routes.length
+      ? routes.slice(0, 2).map((g) => routeCard(g, group))
+      : ['<div class="card"><h3>Deine Wege</h3><p class="small">Nach zwei, drei Fahrten auf derselben Strecke erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>'];
+    html.push(modeCard(group));
+    if (settings.access.on) html.push(accessCard());
+    $('#today').innerHTML = html.join('');
+  }
 
   function renderLastTrip() {
     const t = trips.filter((x) => !x.demo).slice(-1)[0];
@@ -1256,6 +1385,19 @@
 
   // ---------- Ereignisse ----------
   $('#btn-start').addEventListener('click', startTrip);
+  $$('input[name="mgroup"], input[name="pt"]').forEach((i) => i.addEventListener('change', () => {
+    $('#pt-row').hidden = $('input[name="mgroup"]:checked').value !== 'oepnv';
+    settings.mode = selectedMode(); store.set('settings', settings);
+    renderToday();
+  }));
+  const saveAccess = () => {
+    settings.access = { on: $('#inp-access').checked, type: $('#inp-access-type').value };
+    store.set('settings', settings);
+    $('#inp-access-type').hidden = !settings.access.on;
+    renderToday();
+  };
+  $('#inp-access').addEventListener('change', saveAccess);
+  $('#inp-access-type').addEventListener('change', saveAccess);
   $('#btn-end').addEventListener('click', () => { $('#btn-end').hidden = true; $('#btn-end-confirm').hidden = false; $('#btn-end-cancel').hidden = false; $('#btn-end-confirm').focus(); });
   $('#btn-end-cancel').addEventListener('click', () => { resetEndButtons(); $('#btn-end').focus(); });
   $('#btn-end-confirm').addEventListener('click', finishTrip);
@@ -1299,8 +1441,10 @@
   bindPrice('#inp-power', 'powerPrice');
 
   // ---------- Start ----------
-  const modeInput = $(`input[name="mode"][value="${settings.mode}"]`);
-  if (modeInput) modeInput.checked = true;
+  setModeUI(settings.mode);
+  $('#inp-access').checked = !!settings.access.on;
+  $('#inp-access-type').value = settings.access.type;
+  $('#inp-access-type').hidden = !settings.access.on;
   $('#inp-cut').value = String(settings.cut);
   $('#inp-fuel').value = fmtNum(settings.fuelPrice, 2);
   $('#inp-power').value = fmtNum(settings.powerPrice, 2);
@@ -1310,6 +1454,7 @@
   // Ältere Fahrten nachbearbeiten: Rückstau-Halte (ab 0.6.0), Kreuzungen und Warten vor der Abfahrt (ab 0.9.0)
   if (trips.map((t) => tidyTrip(t)).some(Boolean)) saveTrips();
   updateSignalsInfo();
+  renderToday();
   renderLastTrip();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 

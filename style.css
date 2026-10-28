@@ -46,12 +46,21 @@ button:focus-visible,input:focus-visible+span,select:focus-visible,.file-btn:foc
 .file-btn{position:relative;display:flex;align-items:center;justify-content:center}
 .file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}
 
-.modes{border:0;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
-.modes legend{font-weight:600;margin-bottom:8px;padding:0}
-.modes label{position:relative}
-.modes input{position:absolute;opacity:0}
-.modes span{display:flex;align-items:center;justify-content:center;min-height:52px;border:2px solid var(--line);border-radius:10px;background:var(--surface);font-weight:600;cursor:pointer}
-.modes input:checked+span{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
+.switch{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;min-width:0}
+.switch legend{font-weight:600;margin-bottom:8px;padding:0}
+.switch-row{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.switch-row.sub{grid-template-columns:repeat(2,1fr);align-self:flex-start;min-width:240px}
+.switch label{position:relative;display:flex;-webkit-tap-highlight-color:transparent}
+.switch input{position:absolute;inset:0;margin:0;opacity:0;pointer-events:none}
+.switch span{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;min-height:48px;padding:4px 6px;border-radius:9px;font-weight:600;font-size:15px;line-height:1.2;cursor:pointer}
+.switch input:checked+span{background:var(--accent);color:var(--on-accent)}
+.access-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.check{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600;cursor:pointer}
+.check input{width:22px;height:22px;margin:0;accent-color:var(--accent)}
+#inp-access-type{width:auto;max-width:100%}
+.today{display:flex;flex-direction:column;gap:12px}
+.today .kicker{font-size:13px;color:var(--muted);margin:0}
+.tip{background:color-mix(in srgb,var(--accent) 12%,var(--surface));border-left:4px solid var(--accent);padding:8px 12px;border-radius:8px;font-weight:600}
 
 .msg{font-size:15px}
 .msg:empty{display:none}

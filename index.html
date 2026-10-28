@@ -25,16 +25,31 @@
   <p id="app-error" class="msg warn app-error" role="alert" hidden></p>
   <!-- Fahren -->
   <section id="view-start" class="view" aria-labelledby="h-start">
-    <h2 id="h-start">Neue Fahrt</h2>
+    <h2 id="h-start">Heute unterwegs</h2>
     <p class="lead"><strong class="claim">Die grüne Welle beginnt bei dir.</strong><br>Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn.</p>
-    <fieldset class="modes">
+    <fieldset class="switch">
       <legend>Womit bist du unterwegs?</legend>
-      <label><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
-      <label><input type="radio" name="mode" value="rad"><span>Rad</span></label>
-      <label><input type="radio" name="mode" value="bus"><span>Bus</span></label>
-      <label><input type="radio" name="mode" value="bahn"><span>Stadtbahn</span></label>
-      <label><input type="radio" name="mode" value="fuss"><span>Zu Fuß</span></label>
+      <div class="switch-row">
+        <label><input type="radio" name="mgroup" value="auto" checked><span>Auto</span></label>
+        <label><input type="radio" name="mgroup" value="rad"><span>Rad</span></label>
+        <label><input type="radio" name="mgroup" value="oepnv"><span>Bus &amp; Bahn</span></label>
+        <label><input type="radio" name="mgroup" value="fuss"><span>Zu Fuß</span></label>
+      </div>
+      <div class="switch-row sub" id="pt-row" hidden>
+        <label><input type="radio" name="pt" value="bahn" checked><span>Stadtbahn</span></label>
+        <label><input type="radio" name="pt" value="bus"><span>Bus</span></label>
+      </div>
     </fieldset>
+    <div class="access-row">
+      <label class="check"><input type="checkbox" id="inp-access"> Profil barrierefrei</label>
+      <select id="inp-access-type" aria-label="Art der Einschränkung" hidden>
+        <option value="rollstuhl">Rollstuhl</option>
+        <option value="rollator">Rollator oder langsames Gehen</option>
+        <option value="sehen">Sehbehinderung</option>
+        <option value="andere">andere Einschränkung</option>
+      </select>
+    </div>
+    <div id="today" class="today"></div>
     <button id="btn-start" class="btn primary big" type="button">Fahrt starten</button>
     <p id="start-msg" class="msg" role="status" aria-live="polite"></p>
     <div class="card hints">
