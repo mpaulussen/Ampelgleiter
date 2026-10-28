@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Flowtown</title>
 <meta name="description" content="Flowtown – Die grüne Welle beginnt bei dir. Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn. Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.">
-<meta name="theme-color" content="#17212b">
+<meta name="theme-color" content="#16202a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -15,8 +15,49 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-car" viewBox="0 0 24 24"><path d="M4 16V12.2l2-5.3A2 2 0 0 1 7.9 5.6h8.2a2 2 0 0 1 1.9 1.3l2 5.3V16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 12.2h16M6.5 17v2M17.5 17v2"/><circle cx="8" cy="14.5" r=".9" fill="currentColor"/><circle cx="16" cy="14.5" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-bike" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5 9 9h6l3.5 7.5M9 9l3 7.5H5.5M15 9l-1.2-3.2H11.5"/></symbol>
+  <symbol id="i-bus" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="15" rx="3"/><path d="M4 11h16M8 18v3M16 18v3"/><circle cx="8" cy="14.5" r=".9" fill="currentColor"/><circle cx="16" cy="14.5" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-tram" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="13" rx="3"/><path d="M5 11h14M9 2h6M12 2v3M8.5 21l1.5-3M15.5 21 14 18"/><circle cx="9" cy="14.5" r=".9" fill="currentColor"/><circle cx="15" cy="14.5" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-walk" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="m9 21 2.5-6.5M11.5 14.5 14 17v4M12.5 8.5l-1 6M12.5 8.5 9 10.5l-1.5 3M12.5 8.5 15 11.5h3"/></symbol>
+  <symbol id="i-access" viewBox="0 0 24 24"><circle cx="11" cy="4" r="2"/><path d="M11 7.5V13h5l2.5 5.5"/><path d="M8 10.5a5.5 5.5 0 1 0 7.5 7"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="5" r="2.2"/><path d="M8.2 19H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.8"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.8 10.6c.6.5.8 1.2.8 1.9V16h6v-.5c0-.7.2-1.4.8-1.9A6 6 0 0 0 12 3z"/></symbol>
+  <symbol id="i-light" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="20" rx="3"/><circle cx="12" cy="7" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="17" r="1.6"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20h16M7 17v-5M12 17V6M17 17v-8"/></symbol>
+  <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9.5 2h5"/></symbol>
+  <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 3h12M6 21h12M7 3c0 4.5 10 5.5 10 9s-10 4.5-10 9M17 3c0 4.5-10 5.5-10 9s10 4.5 10 9"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 9.5"/></symbol>
+  <symbol id="i-euro" viewBox="0 0 24 24"><path d="M17.5 6.5a7 7 0 1 0 0 11M4 10h9M4 14h9"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.7-3.4 8-8 9-4.6-1-8-4.3-8-9V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10.5V4a1.5 1.5 0 0 1 3 0v6.5M14 10.5V5.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-.5a6 6 0 0 1-5.2-3L3 15.2a1.5 1.5 0 0 1 2.6-1.5L8 16"/></symbol>
+  <symbol id="i-thumb" viewBox="0 0 24 24"><path d="M7 10v11M3 10h4v11H3zM7 10l4-7a2 2 0 0 1 3.1 2.1L13 9h5.3a2 2 0 0 1 2 2.4l-1.5 7.5a2.5 2.5 0 0 1-2.4 2.1H7"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 21h14"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.5 9.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7.5 15h9"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.8"/><path d="M4 5.5v13c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8v-13M4 12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M3.5 18a9 9 0 1 1 17 0"/><path d="m12 14 4-5"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12c2.5-5 5-5 7.5 0s5 5 7.5 0 3.5-3 5-3"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
+  <symbol id="i-gps" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+  <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4"/></symbol>
+</svg>
 <header class="top">
-  <span class="brand" aria-hidden="true"></span>
+  <svg class="logo" viewBox="0 0 40 14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="#D64933"/><circle cx="20" cy="7" r="5" fill="#F2B33D"/><circle cx="33" cy="7" r="5" fill="#2FA36B"/></svg>
   <h1>Flowtown</h1>
   <span class="proto">Prototyp</span>
 </header>
@@ -30,18 +71,18 @@
     <fieldset class="switch">
       <legend>Womit bist du unterwegs?</legend>
       <div class="switch-row">
-        <label><input type="radio" name="mgroup" value="auto" checked><span>Auto</span></label>
-        <label><input type="radio" name="mgroup" value="rad"><span>Rad</span></label>
-        <label><input type="radio" name="mgroup" value="oepnv"><span>Bus &amp; Bahn</span></label>
-        <label><input type="radio" name="mgroup" value="fuss"><span>Zu Fuß</span></label>
+        <label><input type="radio" name="mgroup" value="auto" checked><span><svg class="ic" aria-hidden="true"><use href="#i-car"/></svg>Auto</span></label>
+        <label><input type="radio" name="mgroup" value="rad"><span><svg class="ic" aria-hidden="true"><use href="#i-bike"/></svg>Rad</span></label>
+        <label><input type="radio" name="mgroup" value="oepnv"><span><svg class="ic" aria-hidden="true"><use href="#i-tram"/></svg>Bus &amp; Bahn</span></label>
+        <label><input type="radio" name="mgroup" value="fuss"><span><svg class="ic" aria-hidden="true"><use href="#i-walk"/></svg>Zu Fuß</span></label>
       </div>
       <div class="switch-row sub" id="pt-row" hidden>
-        <label><input type="radio" name="pt" value="bahn" checked><span>Stadtbahn</span></label>
-        <label><input type="radio" name="pt" value="bus"><span>Bus</span></label>
+        <label><input type="radio" name="pt" value="bahn" checked><span><svg class="ic" aria-hidden="true"><use href="#i-tram"/></svg>Stadtbahn</span></label>
+        <label><input type="radio" name="pt" value="bus"><span><svg class="ic" aria-hidden="true"><use href="#i-bus"/></svg>Bus</span></label>
       </div>
     </fieldset>
     <div class="access-row">
-      <label class="check"><input type="checkbox" id="inp-access"> Profil barrierefrei</label>
+      <label class="check"><input type="checkbox" id="inp-access"><svg class="ic" aria-hidden="true"><use href="#i-access"/></svg> Profil barrierefrei</label>
       <select id="inp-access-type" aria-label="Art der Einschränkung" hidden>
         <option value="rollstuhl">Rollstuhl</option>
         <option value="rollator">Rollator oder langsames Gehen</option>
@@ -49,15 +90,15 @@
         <option value="andere">andere Einschränkung</option>
       </select>
     </div>
-    <div id="today" class="today"></div>
-    <button id="btn-start" class="btn primary big" type="button">Fahrt starten</button>
+    <button id="btn-start" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span id="btn-start-label">Fahrt starten</span></button>
     <p id="start-msg" class="msg" role="status" aria-live="polite"></p>
+    <div id="today" class="today"></div>
     <div class="card hints">
-      <h3>So klappt die Aufzeichnung</h3>
-      <ul>
-        <li id="hint-hold">Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.</li>
-        <li id="hint-during">Während der Fahrt nichts antippen. Bewertet wird erst danach.</li>
-        <li>Gespeichert werden nur Halte an Ampeln und Ampeln ohne Halt, nie Start und Ziel.</li>
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg></span><h3>So klappt die Aufzeichnung</h3></div>
+      <ul class="ilist">
+        <li><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg><span id="hint-hold">Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.</span></li>
+        <li><svg class="ic" aria-hidden="true"><use href="#i-hand"/></svg><span id="hint-during">Während der Fahrt nichts antippen. Bewertet wird erst danach.</span></li>
+        <li><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg><span>Gespeichert werden nur Halte an Ampeln und Ampeln ohne Halt, nie Start und Ziel.</span></li>
       </ul>
     </div>
     <div id="last-trip"></div>
@@ -70,17 +111,17 @@
     <div class="speed"><span id="drive-speed">–</span><small>km/h</small></div>
     <p class="dir" id="drive-dir" aria-live="off"></p>
     <dl class="counters">
-      <div><dt id="lbl-drive-time">Fahrzeit</dt><dd id="drive-time">0:00</dd></div>
-      <div><dt>Ampeln ohne Halt</dt><dd id="drive-pass">0</dd></div>
-      <div><dt>Halte an Ampeln</dt><dd id="drive-halts">0</dd></div>
-      <div><dt>Wartezeit</dt><dd id="drive-wait">0:00</dd></div>
+      <div><dt><svg class="ic" aria-hidden="true"><use href="#i-timer"/></svg><span id="lbl-drive-time">Fahrzeit</span></dt><dd id="drive-time">0:00</dd></div>
+      <div><dt><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>Ampeln ohne Halt</span></dt><dd id="drive-pass">0</dd></div>
+      <div><dt><svg class="ic" aria-hidden="true"><use href="#i-light"/></svg><span>Halte an Ampeln</span></dt><dd id="drive-halts">0</dd></div>
+      <div><dt><svg class="ic" aria-hidden="true"><use href="#i-hourglass"/></svg><span>Wartezeit</span></dt><dd id="drive-wait">0:00</dd></div>
     </dl>
-    <p class="gps" id="drive-gps">GPS: –</p>
+    <p class="gps"><svg class="ic" aria-hidden="true"><use href="#i-gps"/></svg><span id="drive-gps">GPS: –</span></p>
     <p class="msg warn" id="drive-warn" hidden></p>
     <div class="end-row">
-      <button id="btn-end" class="btn danger big" type="button">Fahrt beenden</button>
+      <button id="btn-end" class="btn danger big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-stop"/></svg><span id="btn-end-label">Fahrt beenden</span></button>
       <button id="btn-end-confirm" class="btn danger big" type="button" hidden>Ja, beenden</button>
-      <button id="btn-end-cancel" class="btn big" type="button" hidden>Weiterfahren</button>
+      <button id="btn-end-cancel" class="btn big" type="button" hidden><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span id="btn-cont-label">Weiterfahren</span></button>
     </div>
   </section>
 
@@ -90,15 +131,15 @@
     <div id="review-bilanz"></div>
     <p id="review-summary" class="lead"></p>
     <div id="review-list" class="list"></div>
-    <button id="btn-review-done" class="btn primary big" type="button">Fertig</button>
+    <button id="btn-review-done" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Fertig</button>
   </section>
 
   <!-- Statistik -->
   <section id="view-stats" class="view" hidden aria-labelledby="h-stats">
     <h2 id="h-stats">Deine Wartezeit</h2>
     <div class="seg" role="group" aria-label="Zeitraum">
-      <button type="button" data-range="week" aria-pressed="true">Diese Woche</button>
-      <button type="button" data-range="all" aria-pressed="false">Gesamt</button>
+      <button type="button" data-range="week" aria-pressed="true"><svg class="ic" aria-hidden="true"><use href="#i-calendar"/></svg>Diese Woche</button>
+      <button type="button" data-range="all" aria-pressed="false"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Gesamt</button>
     </div>
     <p id="stats-demo" class="msg warn" hidden>Enthält Demo-Daten aus der Testfahrt.</p>
     <div id="stats-body"></div>
@@ -108,12 +149,12 @@
   <section id="view-map" class="view view-map" hidden aria-labelledby="h-map">
     <h2 id="h-map">Deine Warte-Wolke</h2>
     <div class="seg" id="map-mode" role="group" aria-label="Ansicht der Karte">
-      <button type="button" data-mode="signals" aria-pressed="true">Ampeln</button>
-      <button type="button" data-mode="grid" aria-pressed="false">Flow-Raster</button>
+      <button type="button" data-mode="signals" aria-pressed="true"><svg class="ic" aria-hidden="true"><use href="#i-light"/></svg>Ampeln</button>
+      <button type="button" data-mode="grid" aria-pressed="false"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg>Flow-Raster</button>
     </div>
     <select id="map-window" aria-label="Zeitfenster" hidden></select>
     <p class="lead small" id="map-legend"></p>
-    <button id="btn-locate" class="btn" type="button">Zu meinem Standort</button>
+    <button id="btn-locate" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-gps"/></svg>Zu meinem Standort</button>
     <p id="map-loc-msg" class="msg" role="status" aria-live="polite"></p>
     <div id="map" role="region" aria-label="Karte der Ampeln mit deinen Wartezeiten"></div>
     <p id="map-empty" class="msg" hidden>Noch keine Halte aufgezeichnet.</p>
@@ -124,16 +165,16 @@
   <section id="view-more" class="view" hidden aria-labelledby="h-more">
     <h2 id="h-more">Daten und Einstellungen</h2>
     <div class="card">
-      <h3>Deine Daten</h3>
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-db"/></svg></span><h3>Deine Daten</h3></div>
       <p class="small">Alle Daten bleiben auf diesem Gerät. Zum Auswerten kannst du sie als Datei exportieren und weitergeben.</p>
       <div class="btn-col">
-        <button id="btn-export" class="btn" type="button">Daten exportieren (JSON)</button>
-        <button id="btn-export-csv" class="btn" type="button">Halte exportieren (CSV)</button>
-        <label class="btn file-btn">Daten importieren<input id="inp-import" type="file" accept="application/json,.json"></label>
+        <button id="btn-export" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Daten exportieren (JSON)</button>
+        <button id="btn-export-csv" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Halte exportieren (CSV)</button>
+        <label class="btn file-btn"><svg class="ic" aria-hidden="true"><use href="#i-upload"/></svg>Daten importieren<input id="inp-import" type="file" accept="application/json,.json"></label>
       </div>
     </div>
     <div class="card">
-      <h3>Preise für die Kostenschätzung</h3>
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-euro"/></svg></span><h3>Preise für die Kostenschätzung</h3></div>
       <label class="row" for="inp-fuel">Sprit, Euro je Liter
         <input id="inp-fuel" class="price" type="text" inputmode="decimal" autocomplete="off">
       </label>
@@ -142,7 +183,7 @@
       </label>
     </div>
     <div class="card">
-      <h3>Datenschutz</h3>
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Datenschutz</h3></div>
       <label class="row" for="inp-cut">Ereignisse in der Nähe von Start und Ziel verwerfen
         <select id="inp-cut">
           <option value="0">aus</option>
@@ -153,21 +194,21 @@
       <p class="small">So lässt sich aus den Daten nicht ablesen, wo du wohnst oder arbeitest.</p>
     </div>
     <div class="card">
-      <h3>Ampeldaten</h3>
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-light"/></svg></span><h3>Ampeldaten</h3></div>
       <p class="small" id="signals-info">–</p>
-      <button id="btn-reload-signals" class="btn" type="button">Ampeln in der Umgebung neu laden</button>
+      <button id="btn-reload-signals" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-gps"/></svg>Ampeln in der Umgebung neu laden</button>
     </div>
     <div class="card">
-      <h3>Testen ohne Fahrt</h3>
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-flask"/></svg></span><h3>Testen ohne Fahrt</h3></div>
       <p class="small">Spielt eine simulierte Fahrt mit vier Demo-Ampeln ab. Die Demo-Daten sind markiert und lassen sich einzeln löschen.</p>
       <div class="btn-col">
-        <button id="btn-demo" class="btn" type="button">Testfahrt simulieren</button>
+        <button id="btn-demo" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg>Testfahrt simulieren</button>
         <button id="btn-demo-clear" class="btn" type="button">Demo-Daten löschen</button>
       </div>
     </div>
     <div class="card">
-      <h3>Alles löschen</h3>
-      <button id="btn-wipe" class="btn danger" type="button">Alle Fahrten löschen</button>
+      <div class="card-head"><span class="chip bad"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg></span><h3>Alles löschen</h3></div>
+      <button id="btn-wipe" class="btn danger" type="button"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Alle Fahrten löschen</button>
       <div id="wipe-confirm" class="btn-col" hidden>
         <p class="small">Wirklich alle Fahrten löschen? Das lässt sich nicht rückgängig machen.</p>
         <button id="btn-wipe-yes" class="btn danger" type="button">Ja, alles löschen</button>
@@ -180,10 +221,10 @@
 </main>
 
 <nav class="tabs" aria-label="Hauptnavigation">
-  <button type="button" data-view="start" aria-current="page">Fahren</button>
-  <button type="button" data-view="stats">Statistik</button>
-  <button type="button" data-view="map">Karte</button>
-  <button type="button" data-view="more">Mehr</button>
+  <button type="button" data-view="start" aria-current="page"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span>Heute</span></button>
+  <button type="button" data-view="stats"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Statistik</span></button>
+  <button type="button" data-view="map"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg><span>Karte</span></button>
+  <button type="button" data-view="more"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg><span>Mehr</span></button>
 </nav>
 
 <script>

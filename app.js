@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.10.1';
+  const VERSION = '0.11.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -43,11 +43,11 @@
   const words = (mode) => WORDS[mode === 'fuss' ? 'weg' : 'fahrt'];
   function applyModeWords(mode) {
     const w = words(mode);
-    $('#btn-start').textContent = w.start;
+    $('#btn-start-label').textContent = w.start;
     $('#hint-hold').textContent = w.hold;
     $('#hint-during').textContent = w.during;
-    $('#btn-end').textContent = w.end;
-    $('#btn-end-cancel').textContent = w.cont;
+    $('#btn-end-label').textContent = w.end;
+    $('#btn-cont-label').textContent = w.cont;
     $('#lbl-drive-time').textContent = w.time;
   }
   const STEADY_MIN_V = 8.33;      // Gleichmäßigkeit zählt ab 30 km/h
@@ -117,6 +117,10 @@
   const fmtPct = (x) => Math.round(x * 100) + ' %';
   const fmtDate = (t) => new Date(t).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Symbole aus dem Sprite in index.html
+  const ic = (name, cls) => `<svg class="ic${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  const MODE_ICON = { auto: 'car', rad: 'bike', bus: 'bus', bahn: 'tram', fuss: 'walk', oepnv: 'tram' };
+  const cardHead = (icon, title, meta, cls) => `<div class="card-head"><span class="chip${cls ? ' ' + cls : ''}">${ic(icon)}</span><div>${meta ? `<span class="meta">${meta}</span>` : ''}<h3>${title}</h3></div></div>`;
 
   // ---------- Ampeldaten aus OpenStreetMap ----------
   // Gierig wie bis 0.8.0: jeder Standort zur nächsten Gruppe in Reichweite
@@ -800,7 +804,7 @@
     const c = tripCosts(t);
     if (!c) return '';
     const what = c.unit === 'kWh' ? 'Strom' : 'Sprit';
-    const lines = [];
+    const lines = [`<div class="card-head"><span class="chip sm amber">${ic('euro')}</span><strong>Kosten</strong></div>`];
     lines.push(c.energy != null
       ? `<p><strong>${what} für diese Fahrt: ${fmtEuro(c.energy)}</strong></p>`
       : `<p class="small">Trag den Verbrauch ein, dann rechnet die App die ${what}kosten der Fahrt aus.</p>`);
@@ -821,19 +825,19 @@
     const avg = st.movingMs ? (km - gapKm) / (st.movingMs / 3600000) : null;   // Tempo nur aus Abschnitten mit GPS
     const per100 = km >= 5 ? ` (${fmtNum((st.brakes || 0) / km * 100, 1)} je 100 km)` : '';
     const c = t.consumption || {};
-    const w = words(t.mode), walk = t.mode === 'fuss';
+    const w = words(t.mode), walk = t.mode !== 'auto' && t.mode !== 'rad';   // Fahrstil nur, wenn man selbst fährt
     $('#review-bilanz').innerHTML = `<div class="card bilanz">
-      <h3>${w.bilanz}</h3>
+      ${cardHead(MODE_ICON[t.mode] || 'route', w.bilanz, `${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : ''}`)}
       <div class="kpis">
-        <div class="kpi"><b>${fmtNum(km, 1)} km</b><span>Strecke</span></div>
-        <div class="kpi"><b>${fmtDur(dur)}</b><span>${w.time}${dur < 3600000 ? ' (min)' : ''}</span></div>
-        <div class="kpi"><b>${avg ? Math.round(avg) + ' km/h' : '–'}</b><span>Ø Tempo in Bewegung</span></div>
+        <div class="kpi">${ic('route')}<b>${fmtNum(km, 1)} km</b><span>Strecke</span></div>
+        <div class="kpi">${ic('timer')}<b>${fmtDur(dur)}</b><span>${w.time}${dur < 3600000 ? ' (min)' : ''}</span></div>
+        <div class="kpi">${ic('gauge')}<b>${avg ? Math.round(avg) + ' km/h' : '–'}</b><span>Ø Tempo in Bewegung</span></div>
         ${walk
-          ? `<div class="kpi"><b>${t.events.filter((e) => e.type === 'halt' && e.signal).length}</b><span>Halte an Ampeln</span></div>`
-          : `<div class="kpi"><b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>`}
+          ? `<div class="kpi">${ic('light')}<b>${t.events.filter((e) => e.type === 'halt' && e.signal).length}</b><span>Halte an Ampeln</span></div>`
+          : `<div class="kpi">${ic('wave')}<b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>`}
       </div>
-      ${walk ? '' : `<p class="small">${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</p>`}
-      ${gaps.length ? `<p class="small">Ohne GPS-Empfang, etwa im Tunnel: ${fmtDur(gapMs)} min, rund ${fmtNum(gapKm, 1)} km Luftlinie überbrückt. Dort wird nichts gewertet.</p>` : ''}
+      ${walk ? '' : `<p class="note">${ic('alert')}<span>${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</span></p>`}
+      ${gaps.length ? `<p class="note">${ic('gps')}<span>Ohne GPS-Empfang, etwa im Tunnel: ${fmtDur(gapMs)} min, rund ${fmtNum(gapKm, 1)} km Luftlinie überbrückt. Dort wird nichts gewertet.</span></p>` : ''}
       ${t.mode === 'auto' ? `      <label class="small" for="inp-consumption">Verbrauch laut Bordcomputer (freiwillig)</label>
       <div class="cons-row">
         <input id="inp-consumption" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 5,6" value="${c.value != null ? fmtNum(c.value, 1) : ''}">
@@ -860,6 +864,7 @@
     $('#inp-consumption').addEventListener('change', save);
     $('#inp-unit').addEventListener('change', save);
   }
+  const openTags = new Set();   // aufgeklappte Stichwort-Listen bleiben beim Neuzeichnen offen
   function renderReview() {
     if (!reviewTrip) return;
     const halts = reviewTrip.events.filter((e) => e.type === 'halt' && e.signal);
@@ -868,16 +873,22 @@
       const idx = reviewTrip.events.indexOf(e);
       const tags = e.tags || [];
       return `<article class="rev" data-idx="${idx}">
-        <div class="rev-head"><strong>${esc(labelFor(e))}</strong><span class="rev-wait">${fmtDur(e.wait)} min</span></div>
-        <span class="small muted">${esc(dirName(e.heading))}${e.halts > 1 ? ` · ${e.halts} Halte` : ''}${e.queued ? ' · im Rückstau' : ''} · ${new Date(e.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr</span>
+        <div class="rev-head"><span class="chip sm">${ic('light')}</span><div class="rev-title"><strong>${esc(labelFor(e))}</strong><span class="small muted">${[dirName(e.heading), e.halts > 1 ? `${e.halts} Halte` : '', e.queued ? 'im Rückstau' : '', new Date(e.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr'].filter(Boolean).map(esc).join(' · ')}</span></div><span class="rev-wait">${ic('hourglass')}${fmtDur(e.wait)} min</span></div>
         <div class="thumbs" role="group" aria-label="Bewertung für ${esc(labelFor(e))}">
-          <button type="button" class="btn up" data-rate="1" aria-pressed="${e.rating === 1}">Gut</button>
-          <button type="button" class="btn down" data-rate="-1" aria-pressed="${e.rating === -1}">Schlecht</button>
+          <button type="button" class="btn up" data-rate="1" aria-pressed="${e.rating === 1}">${ic('thumb')}Gut</button>
+          <button type="button" class="btn down" data-rate="-1" aria-pressed="${e.rating === -1}">${ic('thumb', 'flip')}Schlecht</button>
         </div>
-        <div class="tags" role="group" aria-label="Stichworte">${tagList.map((t) => `<button type="button" data-tag="${esc(t)}" aria-pressed="${tags.includes(t)}">${esc(t)}</button>`).join('')}</div>
+        <details class="tag-box"${tags.length || openTags.has(idx) ? ' open' : ''} data-idx="${idx}"><summary>${ic('list')}Stichworte${tags.length ? ` (${tags.length})` : ''}</summary>
+          <div class="tags" role="group" aria-label="Stichworte">${tagList.map((t) => `<button type="button" data-tag="${esc(t)}" aria-pressed="${tags.includes(t)}">${esc(t)}</button>`).join('')}</div></details>
       </article>`;
     }).join('');
   }
+  $('#review-list').addEventListener('toggle', (ev) => {
+    const d = ev.target;
+    if (!d.classList || !d.classList.contains('tag-box')) return;
+    const i = Number(d.dataset.idx);
+    if (d.open) openTags.add(i); else openTags.delete(i);
+  }, true);
   $('#review-list').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button');
     const card = ev.target.closest('.rev');
@@ -949,7 +960,7 @@
     const halts = cs.reduce((a, c) => a + c.halts, 0);
     const withEnergy = cs.filter((c) => c.energy != null);
     const energy = withEnergy.reduce((a, c) => a + c.energy, 0);
-    return `<div class="card"><h3>Kosten (geschätzt)</h3>
+    return `<div class="card">${cardHead('euro', 'Kosten', 'geschätzt', 'amber')}
       <p>Ampelhalte: <strong>${fmtEuro(halts)}</strong> bei ${cs.length} Autofahrt${cs.length === 1 ? '' : 'en'}</p>
       ${withEnergy.length ? `<p>Sprit und Strom: <strong>${fmtEuro(energy)}</strong> bei ${withEnergy.length} Fahrt${withEnergy.length === 1 ? '' : 'en'} mit Verbrauchsangabe</p>` : '<p class="small">Für Sprit- und Stromkosten den Verbrauch in der Fahrtbilanz eintragen.</p>'}
     </div>`;
@@ -960,35 +971,41 @@
     $('#stats-demo').hidden = !list.some((t) => t.demo);
     const body = $('#stats-body');
     if (!list.length) {
-      body.innerHTML = `<p class="msg">${statsRange === 'week' ? 'Diese Woche noch keine Fahrten.' : 'Noch keine Fahrten.'} Starte unter „Fahren“ deine erste Aufzeichnung oder spiele unter „Mehr“ eine Testfahrt ab.</p>`;
+      body.innerHTML = `<p class="msg">${statsRange === 'week' ? 'Diese Woche noch keine Fahrten.' : 'Noch keine Fahrten.'} Starte unter „Heute“ deine erste Aufzeichnung oder spiele unter „Mehr“ eine Testfahrt ab.</p>`;
       return;
     }
     const ag = aggregate(list);
     const share = ag.halts + ag.passes ? ag.halts / (ag.halts + ag.passes) : 0;
     const worst = ag.approaches.filter((a) => a.halts).sort((a, b) => b.wait - a.wait)[0];
-    const rows = ag.approaches.sort((a, b) => b.wait - a.wait).map((a) => {
+    const rowList = ag.approaches.sort((a, b) => b.wait - a.wait).map((a) => {
       const n = a.halts + a.passes;
       const rating = a.up || a.down ? `${a.up} / ${a.down}` : '–';
       return `<tr><td>${esc(labelFor(a.sample))}</td><td>${dirShort(a.h)}</td><td>${n}</td><td>${fmtPct(a.halts / n)}</td><td>${a.halts ? fmtS(a.wait / a.halts) : '–'}</td><td>${rating}</td></tr>`;
-    }).join('');
-    const tripRows = list.slice().sort((a, b) => b.start - a.start).map((t) => {
+    });
+    const tripList = list.slice().sort((a, b) => b.start - a.start).map((t) => {
       const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-      return `<div class="trip"><span>${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}${(() => { const c = tripCosts(t); return c && c.energy != null ? ` · ${fmtEuro(c.energy)}` : ''; })()}</span></span>
-        <span><button type="button" data-review="${t.id}">Ansehen</button> <button type="button" data-del="${t.id}">Löschen</button></span></div>`;
-    }).join('');
+      return `<div class="trip"><span class="chip sm">${ic(MODE_ICON[t.mode] || 'route')}</span><span class="trip-main">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}${(() => { const c = tripCosts(t); return c && c.energy != null ? ` · ${fmtEuro(c.energy)}` : ''; })()}</span></span>
+        <span class="trip-act"><button type="button" data-review="${t.id}">Ansehen</button><button type="button" data-del="${t.id}">Löschen</button></span></div>`;
+    });
+    const thead = '<thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead>';
+    const table = (rs) => `<div class="tbl-wrap"><table>${thead}<tbody>${rs.join('')}</tbody></table></div>`;
+    // lange Listen: die wichtigsten zuerst, der Rest zum Aufklappen
+    const rest = (items, n, label, wrap) => items.length > n ? `<details class="more-box"><summary>${ic('list')}${label} (${items.length - n} weitere)</summary>${wrap(items.slice(n))}</details>` : '';
     body.innerHTML = `
       <div class="kpis">
-        <div class="kpi"><b>${fmtDur(ag.wait)}</b><span>Minuten an Ampeln gewartet</span></div>
-        <div class="kpi"><b>${list.length}</b><span>Fahrt${list.length === 1 ? '' : 'en'}</span></div>
-        <div class="kpi"><b>${fmtPct(share)}</b><span>der Ampeln mit Halt</span></div>
-        <div class="kpi"><b>${ag.halts ? fmtS(ag.wait / ag.halts) : '–'}</b><span>Ø Wartezeit je Halt</span></div>
+        <div class="kpi">${ic('hourglass')}<b>${fmtDur(ag.wait)}</b><span>Minuten an Ampeln gewartet</span></div>
+        <div class="kpi">${ic('list')}<b>${list.length}</b><span>Aufzeichnung${list.length === 1 ? '' : 'en'}</span></div>
+        <div class="kpi">${ic('light')}<b>${fmtPct(share)}</b><span>der Ampeln mit Halt</span></div>
+        <div class="kpi">${ic('clock')}<b>${ag.halts ? fmtS(ag.wait / ag.halts) : '–'}</b><span>Ø Wartezeit je Halt</span></div>
       </div>
       ${costSummary(list)}
-      ${worst ? `<div class="card worst"><h3>Deine nervigste Ampel</h3><p><strong>${esc(labelFor(worst.sample))}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><p class="small">${worst.halts}× gehalten, zusammen ${fmtDur(worst.wait)} min, längster Halt ${fmtDur(worst.maxWait)} min.</p></div>` : ''}
-      <h3>Alle Ampeln</h3>
-      <div class="tbl-wrap"><table><thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <h3>Fahrten und Wege</h3>
-      <div class="list">${tripRows}</div>`;
+      ${worst ? `<div class="card worst">${cardHead('alert', 'Deine nervigste Ampel', '', 'bad')}<p><strong>${esc(labelFor(worst.sample))}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><ul class="facts"><li>${ic('light')}<span>gehalten</span><b>${worst.halts}×</b></li><li>${ic('hourglass')}<span>zusammen</span><b>${fmtDur(worst.wait)} min</b></li><li>${ic('clock')}<span>längster Halt</span><b>${fmtDur(worst.maxWait)} min</b></li></ul></div>` : ''}
+      <h3 class="sec">${ic('light')}Alle Ampeln</h3>
+      ${table(rowList.slice(0, 8))}
+      ${rest(rowList, 8, 'Alle Ampeln anzeigen', table)}
+      <h3 class="sec">${ic('list')}Fahrten und Wege</h3>
+      <div class="list">${tripList.slice(0, 5).join('')}</div>
+      ${rest(tripList, 5, 'Ältere anzeigen', (xs) => `<div class="list">${xs.join('')}</div>`)}`;
     requestNames(ag.per.map((a) => a.sample), () => { if (!$('#view-stats').hidden) renderStats(); });
   }
   $('.seg').addEventListener('click', (ev) => {
@@ -1070,7 +1087,7 @@
   function renderInsights() {
     const ins = gridInsights(trips);
     $('#map-insights').innerHTML = ins.length
-      ? `<h3>Was dein Raster zeigt</h3><ul>${ins.join('')}</ul>`
+      ? `${cardHead('bulb', 'Was dein Raster zeigt', '', 'amber')}<ul>${ins.join('')}</ul>`
       : '<p class="small muted">Erkenntnisse erscheinen, sobald du Orte mehrmals durchfahren hast.</p>';
   }
   function drawGrid() {
@@ -1340,51 +1357,53 @@
       for (const t of own) { const h = new Date(t.start).getHours(); (hours[h] = hours[h] || []).push(tripWait(t)); }
       const hs = Object.keys(hours).map(Number);
       const nowAvg = hours[now] ? avgOf(hours[now]) : avgOf(own.map(tripWait));
-      body = `<p>Jetzt los: etwa ${durText(nowAvg)} an Ampeln</p>`;
+      body = `<div class="big-line">${ic('hourglass')}<span>Jetzt los: etwa <b>${durText(nowAvg)}</b> an Ampeln</span></div>`;
       if (hs.length >= 2) {
         const best = hs.reduce((b, h) => (avgOf(hours[h]) < avgOf(hours[b]) ? h : b), hs[0]);
         // verglichen mit jetzt, oder ohne Fahrten zu dieser Stunde mit allen anderen Abfahrtszeiten
         const ref = hours[now] ? nowAvg : avgOf(own.filter((t) => new Date(t.start).getHours() !== best).map(tripWait));
         if (best !== now && ref - avgOf(hours[best]) >= 30000) {
-          body += `<p class="tip">Am wenigsten gewartet hast du bei Abfahrt zwischen ${best} und ${best + 1} Uhr: Ø ${durText(avgOf(hours[best]))} statt ${durText(ref)}.</p>`;
+          body += `<p class="tip">${ic('bulb')}<span>Am wenigsten gewartet hast du bei Abfahrt zwischen ${best} und ${best + 1} Uhr: Ø ${durText(avgOf(hours[best]))} statt ${durText(ref)}.</span></p>`;
         }
       }
     } else {
-      body = `<p>${cap(GROUP_WITH[group])} bist du diesen Weg noch nicht ${words(group).past}.</p>`;
+      body = `<p class="note">${ic('info')}<span>${cap(GROUP_WITH[group])} bist du diesen Weg noch nicht ${words(group).past}.</span></p>`;
     }
     // Strecken-Vergleich: derselbe Weg mit verschiedenen Verkehrsmitteln
     const byMode = {};
     for (const t of g.trips) (byMode[MODE_GROUP[t.mode]] = byMode[MODE_GROUP[t.mode]] || []).push(t);
     if (Object.keys(byMode).length >= 2) {
-      body += `<p class="small">${Object.keys(byMode).map((m) => `${cap(GROUP_WITH[m])}: Ø ${durText(avgOf(byMode[m].map((t) => t.end - t.start)))} unterwegs, ${durText(avgOf(byMode[m].map(tripWait)))} an Ampeln`).join('<br>')}</p>`;
+      body += `<div class="compare">${Object.keys(byMode).map((m) => `<div>${ic(MODE_ICON[m])}<span>${cap(GROUP_WITH[m])}: Ø ${durText(avgOf(byMode[m].map((t) => t.end - t.start)))} unterwegs, ${durText(avgOf(byMode[m].map(tripWait)))} an Ampeln</span></div>`).join('')}</div>`;
     }
-    return `<div class="card"><p class="kicker">Dein Weg · ${g.trips.length}× unterwegs</p><h3>${esc(labelFor(g.first))} → ${esc(labelFor(g.last))}</h3>${body}</div>`;
+    return `<div class="card"><div class="card-head"><span class="chip">${ic('route')}</span><div><span class="meta">Dein Weg · ${g.trips.length}× unterwegs</span><div class="route-name">${esc(labelFor(g.first))}<span class="arrow" aria-label="nach">→</span>${esc(labelFor(g.last))}</div></div></div>${body}</div>`;
   }
   function modeCard(group) {
     const since = Date.now() - 30 * 864e5;
     const ts = trips.filter((t) => !t.demo && MODE_GROUP[t.mode] === group && t.start >= since);
-    const head = `<h3>${cap(GROUP_WITH[group])} in den letzten 30 Tagen</h3>`;
-    const later = group === 'oepnv' ? '<p class="small muted">Abfahrten und Verspätungen von moBiel zeigt Flowtown, sobald eine Datenquelle angebunden ist.</p>' : '';
+    const head = cardHead(MODE_ICON[group], cap(GROUP_WITH[group]), 'Die letzten 30 Tage');
+    const later = group === 'oepnv' ? `<p class="note">${ic('bell')}<span>Abfahrten und Verspätungen von moBiel zeigt Flowtown, sobald eine Datenquelle angebunden ist.</span></p>` : '';
     const w = words(group);
-    if (!ts.length) return `<div class="card">${head}<p class="small">${w.none}. Starte unten deine erste Aufzeichnung.</p>${later}</div>`;
+    if (!ts.length) return `<div class="card">${head}<p class="note">${ic('info')}<span>${w.none}. Starte unten deine erste Aufzeichnung.</span></p>${later}</div>`;
     const km = ts.reduce((a, t) => a + t.distance, 0) / 1000;
     const halts = ts.reduce((a, t) => a + t.events.filter((e) => e.type === 'halt' && e.signal).length, 0);
     const wait = ts.reduce((a, t) => a + tripWait(t), 0);
     let extra = '';
     if (group === 'oepnv') {
       const atStops = ts.reduce((a, t) => a + t.events.reduce((b, e) => b + (e.atStop ? e.wait : 0), 0), 0);
-      extra = `<p class="small">${atStops ? `An Haltestellen ${durText(atStops)}, an Ampeln ${durText(wait)}. ` : ''}Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</p>`;
+      extra = `${atStops ? `<ul class="facts"><li>${ic('pin')}<span>An Haltestellen</span><b>${durText(atStops)}</b></li><li>${ic('light')}<span>An Ampeln</span><b>${durText(wait)}</b></li></ul>` : ''}<p class="note">${ic('info')}<span>Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</span></p>`;
     }
-    return `<div class="card">${head}<p class="small">${ts.length} ${ts.length === 1 ? w.one : w.many}, ${fmtNum(km, 1)} km · ${fmtNum(km ? halts / km : 0, 1)} Ampelhalte je km · Ø ${durText(wait / ts.length)} an Ampeln je ${w.one}</p>${extra}${later}</div>`;
+    const mini = (icon, val, label) => `<div class="mini">${ic(icon)}<b>${val}</b><span>${label}</span></div>`;
+    return `<div class="card">${head}<div class="minis">${mini('list', ts.length, ts.length === 1 ? w.one : w.many)}${mini('route', fmtNum(km, 1) + ' km', 'Strecke')}${mini('light', fmtNum(km ? halts / km : 0, 1), 'Ampelhalte je km')}${mini('hourglass', durText(wait / ts.length), 'Ø an Ampeln je ' + w.one)}</div>${extra}${later}</div>`;
   }
   function accessCard() {
     const ids = new Set();
     for (const t of trips) for (const e of t.events) if (e.signal && !e.signal.startsWith('demo')) ids.add(e.signal);
     let yes = 0, no = 0, unk = 0;
     for (const id of ids) { const c = clusterById[id]; if (c && c.sound === 'yes') yes++; else if (c && c.sound === 'no') no++; else unk++; }
-    return `<div class="card"><h3>Barrierefrei unterwegs</h3>
-      <p class="small">${ids.size ? `Von ${ids.size} Ampeln auf deinen Wegen haben laut OpenStreetMap ${yes} ein Tonsignal, ${no} keins. Bei ${unk} fehlt die Angabe.` : 'Nach den ersten Fahrten siehst du hier, welche Ampeln auf deinen Wegen ein Tonsignal haben.'}</p>
-      <p class="small">Bei der Bewertung gibt es zusätzliche Stichworte wie „Grün zu kurz zum Queren“. Deine Aufzeichnungen tragen den Hinweis „${esc(ACCESS_LABEL[settings.access.type])}“, damit sich Wartezeiten mit Einschränkung getrennt auswerten lassen. Das bleibt auf deinem Gerät.</p></div>`;
+    return `<div class="card">${cardHead('access', 'Barrierefrei unterwegs', esc(ACCESS_LABEL[settings.access.type]))}
+      ${ids.size ? `<p class="small muted">Ampeln auf deinen Wegen laut OpenStreetMap</p><ul class="facts"><li>${ic('sound')}<span>mit Tonsignal</span><b>${yes}</b></li><li>${ic('light')}<span>ohne Tonsignal</span><b>${no}</b></li><li>${ic('info')}<span>ohne Angabe</span><b>${unk}</b></li></ul>` : `<p class="note">${ic('sound')}<span>Nach den ersten Fahrten siehst du hier, welche Ampeln auf deinen Wegen ein Tonsignal haben.</span></p>`}
+      <p class="note">${ic('thumb')}<span>Bei der Bewertung gibt es zusätzliche Stichworte wie „Grün zu kurz zum Queren“.</span></p>
+      <p class="note">${ic('shield')}<span>Deine Aufzeichnungen tragen den Hinweis „${esc(ACCESS_LABEL[settings.access.type])}“, damit sich Wartezeiten mit Einschränkung getrennt auswerten lassen. Das bleibt auf deinem Gerät.</span></p></div>`;
   }
   function renderToday() {
     const group = MODE_GROUP[selectedMode()];
@@ -1395,7 +1414,7 @@
     if (routes.some(own)) routes = routes.filter(own);   // Wege mit anderen Verkehrsmitteln nur, solange es keine eigenen gibt
     const html = routes.length
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
-      : ['<div class="card"><h3>Deine Wege</h3><p class="small">Wenn du dieselbe Strecke zwei-, dreimal zurückgelegt hast, erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>'];
+      : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small">Wenn du dieselbe Strecke zwei-, dreimal zurückgelegt hast, erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>`];
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
     $('#today').innerHTML = html.join('');
@@ -1406,7 +1425,7 @@
     const el = $('#last-trip');
     if (!t) { el.innerHTML = ''; return; }
     const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-    el.innerHTML = `<div class="card"><h3>${words(t.mode).last}</h3><p class="small">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : ''} · ${h.length} Halte an Ampeln · ${fmtDur(h.reduce((a, e) => a + e.wait, 0))} min gewartet</p></div>`;
+    el.innerHTML = `<div class="card">${cardHead(MODE_ICON[t.mode] || 'route', words(t.mode).last, `${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : ''}`)}<ul class="facts"><li>${ic('light')}<span>Halte an Ampeln</span><b>${h.length}</b></li><li>${ic('hourglass')}<span>gewartet</span><b>${durText(h.reduce((a, e) => a + e.wait, 0))}</b></li></ul></div>`;
   }
 
   // ---------- Ereignisse ----------
