@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.8.0';
+  const VERSION = '0.9.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -21,7 +21,12 @@
   const QUEUE_M = 250;            // Rückstau: Halt bis zu diesem Abstand vor einer Ampel, durch die man danach fährt
   const QUEUE_MS = 120000;        // ... wenn die Durchfahrt höchstens so lange nach dem Halt kommt
   const MAX_ACCURACY = 50;        // ungenauere GPS-Punkte werden verworfen
-  const CLUSTER_M = 35;           // Ampelknoten in diesem Abstand bilden eine Kreuzung
+  const CLUSTER_M = 40;           // Signalstandorte in diesem Abstand zueinander bilden eine Kreuzung
+  const CLUSTER_MAX_M = 70;       // ... solange die Kreuzung nicht weiter ausgedehnt ist
+  const JUNCTION_M = 50;          // zwei Ampeln direkt hintereinander, so nah beieinander: ein Kreuzungsbereich
+  const JUNCTION_MS = 60000;      // ... wenn höchstens so viel Zeit dazwischen liegt
+  const STOP_M = 60;              // Bus und Bahn: Halt so nah an einer Haltestelle ist ein Haltestellenhalt
+  const GAP_MS = 15000;           // so lange ohne brauchbaren GPS-Punkt: Empfangslücke, z. B. im Tunnel
   const AREA_RADIUS = 5000;       // Umkreis für das Laden der Ampeln
   const TAGS = ['zu lange gewartet', 'Grün zu kurz', 'unübersichtlich', 'Anschluss verpasst', 'alles gut'];
   const STEADY_MIN_V = 8.33;      // Gleichmäßigkeit zählt ab 30 km/h
@@ -53,9 +58,14 @@
   let trips = store.get('trips', []);
   let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35 }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
-  let names = store.get('names2', {});   // 'names2': Namen mit Querstraße (ab 0.6.0)
+  if (!signalCache.stops) { signalCache.stops = {}; signalCache.areas = []; }   // Haltestellen ab 0.9.0: Gebiete einmal neu laden
+  let names = store.get('names3', {});   // 'names3': Querstraßen ohne Bahnsteignamen (ab 0.9.0)
+  const names2 = store.get('names2', {}); // mit Querstraße (0.6.0 bis 0.8.0)
   const oldNames = store.get('names', {}); // nur Straße (bis 0.5.0), als Übergang bis die neuen Namen da sind
+  const nameOf = (id) => names[id] || names2[id] || oldNames[id] || null;
   let clusters = [];   // wird beim Start aus den gespeicherten Ampeln aufgebaut
+  let alias = {};      // 'c' + Signalstandort -> Kreuzung, damit ältere Fahrten zur aktuellen Einteilung passen
+  let clusterById = {};
   const saveTrips = () => store.set('trips', trips);
 
   // ---------- Geometrie ----------
@@ -87,28 +97,63 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   // ---------- Ampeldaten aus OpenStreetMap ----------
-  function buildClusters(nodes) {
-    const list = [];
-    const ids = Object.keys(nodes).sort((a, b) => Number(a) - Number(b));
-    for (const id of ids) {
-      const [lat, lon] = nodes[id];
-      const p = { lat, lon };
+  // Gierig wie bis 0.8.0: jeder Standort zur nächsten Gruppe in Reichweite
+  function greedyGroups(pts) {
+    const out = [];
+    for (const p of pts) {
       let best = null, bd = Infinity;
-      for (const c of list) { const d = dist(c, p); if (d < bd) { bd = d; best = c; } }
-      if (best && bd <= CLUSTER_M) {
-        best.n += 1; best.lat += (lat - best.lat) / best.n; best.lon += (lon - best.lon) / best.n;
-      } else {
-        list.push({ id: 'c' + id, lat, lon, n: 1 });
+      for (const g of out) { const d = dist(g.m, p); if (d < bd) { bd = d; best = g; } }
+      if (best && bd <= 35) {
+        best.pts.push(p); const n = best.pts.length;
+        best.m.lat += (p.lat - best.m.lat) / n; best.m.lon += (p.lon - best.m.lon) / n;
+      } else out.push({ m: { lat: p.lat, lon: p.lon }, pts: [p] });
+    }
+    return out.map((g) => g.pts);
+  }
+  function buildClusters(nodes) {
+    const pts = Object.keys(nodes).sort((a, b) => Number(a) - Number(b)).map((id) => ({ id, lat: nodes[id][0], lon: nodes[id][1] }));
+    // Verketten: Standorte bis CLUSTER_M zueinander gehören zusammen, auch über mehrere Ecken einer großen Kreuzung
+    const parent = pts.map((_, i) => i);
+    const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const gi = (p) => Math.floor(p.lat / 0.0004), gj = (p) => Math.floor(p.lon / 0.0006);   // Raster etwa 44 × 41 m
+    const grid = {};
+    pts.forEach((p, i) => { const k = gi(p) + '_' + gj(p); (grid[k] = grid[k] || []).push(i); });
+    pts.forEach((p, i) => {
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        for (const j of grid[(gi(p) + a) + '_' + (gj(p) + b)] || []) {
+          if (j > i && dist(p, pts[j]) <= CLUSTER_M) parent[find(j)] = find(i);
+        }
+      }
+    });
+    const groups = {};
+    pts.forEach((p, i) => { const r = find(i); (groups[r] = groups[r] || []).push(p); });
+    const list = [];
+    alias = {}; clusterById = {};
+    for (const g of Object.values(groups)) {
+      const m = { lat: g.reduce((x, p) => x + p.lat, 0) / g.length, lon: g.reduce((x, p) => x + p.lon, 0) / g.length };
+      const parts = g.every((p) => dist(p, m) <= CLUSTER_MAX_M) ? [g] : greedyGroups(g);   // zu lange Ketten wieder aufteilen
+      for (const part of parts) {
+        const c = { id: 'c' + part[0].id, lat: part.reduce((x, p) => x + p.lat, 0) / part.length, lon: part.reduce((x, p) => x + p.lon, 0) / part.length, n: part.length };
+        list.push(c); clusterById[c.id] = c;
+        for (const p of part) alias['c' + p.id] = c.id;
       }
     }
     return list;
+  }
+  function nearStop(p) {
+    for (const id in signalCache.stops) {
+      const [lat, lon] = signalCache.stops[id];
+      if (Math.abs(lat - p.lat) < 0.001 && dist({ lat, lon }, p) <= STOP_M) return true;
+    }
+    return false;
   }
   function areaCovers(p) {
     const now = Date.now();
     return signalCache.areas.some((a) => dist(a, p) < a.r - 1500 && now - a.fetched < 30 * 864e5);
   }
   async function fetchSignals(p) {
-    const q = `[out:json][timeout:25];(node(around:${AREA_RADIUS},${p.lat},${p.lon})[highway=traffic_signals];node(around:${AREA_RADIUS},${p.lat},${p.lon})[crossing=traffic_signals];);out;`;
+    const ar = `(around:${AREA_RADIUS},${p.lat},${p.lon})`;
+    const q = `[out:json][timeout:25];(node${ar}[highway=traffic_signals];node${ar}[crossing=traffic_signals];node${ar}[railway=tram_stop];node${ar}[public_transport=stop_position];node${ar}[highway=bus_stop];);out;`;
     let lastErr;
     for (const url of OVERPASS) {
       try {
@@ -118,13 +163,19 @@
         clearTimeout(timer);
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const json = await res.json();
-        for (const el of json.elements || []) if (el.type === 'node') signalCache.nodes[el.id] = [round5(el.lat), round5(el.lon)];
+        let n = 0;
+        for (const el of json.elements || []) {
+          if (el.type !== 'node') continue;
+          const tg = el.tags || {};
+          if (tg.highway === 'traffic_signals' || tg.crossing === 'traffic_signals') { signalCache.nodes[el.id] = [round5(el.lat), round5(el.lon)]; n++; }
+          else signalCache.stops[el.id] = [round5(el.lat), round5(el.lon)];
+        }
         signalCache.areas = signalCache.areas.filter((a) => dist(a, p) > 1000);
         signalCache.areas.push({ lat: round5(p.lat), lon: round5(p.lon), r: AREA_RADIUS, fetched: Date.now() });
         store.set('signals', signalCache);
         clusters = buildClusters(signalCache.nodes);
         updateSignalsInfo();
-        return (json.elements || []).length;
+        return n;
       } catch (e) { lastErr = e; }
     }
     throw lastErr || new Error('Ampeldaten nicht erreichbar');
@@ -132,16 +183,41 @@
   function updateSignalsInfo() {
     const n = clusters.length;
     $('#signals-info').textContent = n
-      ? `${n} Ampel-Kreuzungen gespeichert (${Object.keys(signalCache.nodes).length} Signalstandorte, ${signalCache.areas.length} Gebiet${signalCache.areas.length === 1 ? '' : 'e'}).`
+      ? `${n} Ampel-Kreuzungen gespeichert (${Object.keys(signalCache.nodes).length} Signalstandorte, ${Object.keys(signalCache.stops).length} Haltestellenpunkte, ${signalCache.areas.length} Gebiet${signalCache.areas.length === 1 ? '' : 'e'}).`
       : 'Noch keine Ampeln geladen. Das passiert automatisch beim ersten Fahrtstart.';
   }
 
   // Straßennamen für Kreuzungen, nacheinander und gedrosselt (Nominatim erlaubt 1 Anfrage pro Sekunde)
   const nameQueue = [];
   let nameBusy = false;
+  // Ampel ohne Querstraße (oft Fußgängerampel): mit der nächsten benannten Kreuzung derselben Straße unterscheidbar machen
+  const SIDE = ['nördlich', 'nordöstlich', 'östlich', 'südöstlich', 'südlich', 'südwestlich', 'westlich', 'nordwestlich'];
+  const refMemo = {};
+  function withLandmark(e, base) {
+    if (base.indexOf(' / ') > 0 || /\d/.test(base)) return base;
+    const key = e.signal + '|' + Object.keys(names).length + '|' + trips.length;
+    if (!(key in refMemo)) {
+      let best = null, bd = 2000;
+      const seen = {};
+      for (const tr of trips) for (const x of tr.events) {
+        if (!x.signal || x.signal === e.signal || seen[x.signal]) continue;
+        seen[x.signal] = true;
+        const n = nameOf(x.signal);
+        if (!n || n.split(' / ').indexOf(base) < 0 || n.indexOf(' / ') < 0) continue;
+        const d = dist(e, x);
+        if (d < bd) { bd = d; best = { n, x, d }; }
+      }
+      refMemo[key] = null;
+      if (best) {
+        const other = best.n.split(' / ').find((p) => p !== base);
+        const far = best.d < 1000 ? `${Math.max(10, Math.round(best.d / 10) * 10)} m` : `${fmtNum(best.d / 1000, 1)} km`;
+        refMemo[key] = `${base}, ${far} ${SIDE[Math.round(bearing(best.x, e) / 45) % 8]} von ${other}`;
+      }
+    }
+    return refMemo[key] || base;
+  }
   function labelFor(e) {
-    if (names[e.signal]) return names[e.signal];
-    if (oldNames[e.signal]) return oldNames[e.signal];
+    if (nameOf(e.signal)) return withLandmark(e, nameOf(e.signal));
     if (e.signal && e.signal.startsWith('demo')) return 'Demo-Ampel ' + e.signal.slice(4);
     return `Ampel bei ${e.lat.toFixed(4)}, ${e.lon.toFixed(4)}`;
   }
@@ -172,7 +248,8 @@
   }
   // Namen für mehrere Kreuzungen mit einer einzigen Abfrage: die nächste Straße zuerst, dann die Querstraße
   async function crossingNames(list) {
-    const parts = list.map((q) => `way(around:35,${q.lat},${q.lon})[highway][name];`).join('');
+    // Bahnsteige und Haltestellen tragen oft den Haltestellennamen, sind aber keine Querstraße
+    const parts = list.map((q) => `way(around:35,${q.lat},${q.lon})[highway][name][highway!~"^(platform|bus_stop)$"];`).join('');
     const query = `[out:json][timeout:25];(${parts});out tags geom;`;
     for (const url of OVERPASS) {
       try {
@@ -210,14 +287,14 @@
         const batch = nameQueue.splice(0, 25);
         const found = (await crossingNames(batch)) || {};
         for (const q of batch) if (found[q.signal] && found[q.signal].indexOf(' / ') > 0) names[q.signal] = found[q.signal];
-        store.set('names2', names);
+        store.set('names3', names);
         if (onDone) onDone();
         // ohne Querstraße (z. B. Fußgängerampel): Straße mit Hausnummer, höchstens eine Anfrage pro Sekunde
         for (const q of batch) {
           if (names[q.signal]) continue;
           await new Promise((r) => setTimeout(r, 1100));
           const n = (await streetWithNumber(q)) || found[q.signal];
-          if (n) { names[q.signal] = n; store.set('names2', names); if (onDone) onDone(); }
+          if (n) { names[q.signal] = n; store.set('names3', names); if (onDone) onDone(); }
         }
       }
     } finally {
@@ -232,7 +309,7 @@
 
   function newRecording(mode, extraClusters, demo) {
     return {
-      trip: { id: 't' + Date.now().toString(36), mode, start: null, end: null, distance: 0, events: [], demo: !!demo },
+      trip: { id: 't' + Date.now().toString(36), mode, start: null, end: null, distance: 0, events: [], gaps: [], demo: !!demo },
       cfg: MODES[mode],
       extra: extraClusters || [],
       samples: [],          // letzte Positionen {lat, lon, t, v}
@@ -245,6 +322,7 @@
       cells: {},            // Flow-Raster: Feld|Zeitfenster -> Zeit, Stillstand, Tempo-Anteil
       st: { moving: 0, steady: 0, steadyBase: 0, brakes: 0, accels: 0, win: [], lastVs: null, lastBrake: 0, lastAccel: 0 },
       gpsCount: 0,
+      lastFixAt: 0,         // Gerätezeit des letzten brauchbaren GPS-Punkts
       startedAt: Date.now()
     };
   }
@@ -285,8 +363,18 @@
     const p = { lat: c.latitude, lon: c.longitude, t };
     const prev = rec.samples[rec.samples.length - 1];
     if (prev && t <= prev.t) return;
+    rec.lastFixAt = Date.now();
     if (!rec.trip.start) { rec.trip.start = t; rec.first = { lat: p.lat, lon: p.lon }; maybeFetchSignals(p, true); }
 
+    // Empfangslücke (Tunnel, Unterführung): ein laufender Halt endet mit dem letzten Punkt davor, die Strecke wird überbrückt
+    if (prev && t - prev.t > GAP_MS) {
+      const d = dist(prev, p);
+      if (rec.stop && d > 25) endStop(prev.t);
+      if (d > 100) {
+        rec.trip.gaps.push({ t: prev.t, tEnd: t, d: Math.round(d) });
+        rec.samples = []; rec.slowSince = null;
+      }
+    }
     let v = (c.speed != null && c.speed >= 0) ? c.speed : null;
     if (prev) {
       const d = dist(prev, p);
@@ -313,8 +401,9 @@
         if (rec.slowSince == null) rec.slowSince = { t, lat: p.lat, lon: p.lon, heading };
         if (t - rec.slowSince.t >= STOP_CONFIRM_MS) {
           const s = rec.slowSince;
-          const sig = findSignal(s, s.heading, cfg.haltRadius);
-          rec.stop = { t0: s.t, lat: s.lat, lon: s.lon, heading: s.heading, signal: sig };
+          const atStop = (rec.trip.mode === 'bahn' || rec.trip.mode === 'bus') && nearStop(s);
+          const sig = atStop ? null : findSignal(s, s.heading, cfg.haltRadius);
+          rec.stop = { t0: s.t, lat: s.lat, lon: s.lon, heading: s.heading, signal: sig, atStop };
           rec.fastSince = null;
         }
       } else {
@@ -331,7 +420,7 @@
       }
     }
     if (rec.stop) {
-      const label = rec.stop.signal ? 'Halt an Ampel' : 'Halt';
+      const label = rec.stop.signal ? 'Halt an Ampel' : rec.stop.atStop ? 'Halt an Haltestelle' : 'Halt';
       setDriveState(`${label} · ${fmtDur(t - rec.stop.t0)}`, 'halt');
     } else {
       setDriveState(vs < cfg.stopV ? 'Langsam …' : 'Unterwegs', 'moving');
@@ -420,13 +509,16 @@
         if (ev[i].type === 'pass' && ev[i].signal === sigId && s.t0 - ev[i].t < 60000) { ev.splice(i, 1); break; }
       }
     }
-    ev.push({
+    const e = {
       type: 'halt', signal: sigId,
       lat: round5(s.signal ? s.signal.lat : s.lat), lon: round5(s.signal ? s.signal.lon : s.lon),
       t: s.t0, tEnd, wait, halts: 1,
       heading: s.heading == null ? null : Math.round(s.heading),
-      distToSignal: s.signal ? Math.round(dist(s, s.signal)) : null
-    });
+      distToSignal: s.signal ? Math.round(dist(s, s.signal)) : null,
+      at: [round5(s.lat), round5(s.lon)]   // wo wirklich gestanden wurde, für spätere Auswertungen
+    };
+    if (s.atStop) e.atStop = true;
+    ev.push(e);
   }
 
   // Ein Halt ohne Ampel in der Nähe, nach dem man bald durch eine Ampel fährt, war Rückstau vor dieser Ampel
@@ -435,7 +527,7 @@
     let changed = false;
     for (let i = 0; i < ev.length; i++) {
       const e = ev[i];
-      if (e.type !== 'halt' || e.signal) continue;
+      if (e.type !== 'halt' || e.signal || e.atStop) continue;
       for (let j = i + 1; j < ev.length; j++) {
         const n = ev[j];
         if (n.t - (e.tEnd || e.t) > QUEUE_MS) break;
@@ -453,6 +545,43 @@
           break;
         }
       }
+    }
+    return changed;
+  }
+
+  // Fahrt aufräumen: aktuelle Kreuzungs-Einteilung, kein Warten vor der Abfahrt, eine Kreuzung nur einmal
+  function tidyTrip(trip) {
+    const ev = trip.events;
+    let changed = false;
+    for (const e of ev) {
+      const to = e.signal && alias[e.signal];
+      if (to && to !== e.signal) {
+        const c = clusterById[to];
+        e.signal = to;
+        if (c) { e.lat = round5(c.lat); e.lon = round5(c.lon); }
+        changed = true;
+      }
+    }
+    // Halt ab dem ersten GPS-Punkt, noch ohne Richtung: Warten an der Haltestelle oder auf dem Parkplatz
+    const i0 = ev.findIndex((e) => e.type === 'halt' && e.t <= trip.start && e.heading == null);
+    if (i0 >= 0) { ev.splice(i0, 1); changed = true; }
+    if (assignQueueHalts(trip)) changed = true;
+    // Zwei Ampeln direkt hintereinander, dicht beieinander und kurz nacheinander: dieselbe Kreuzung
+    for (let i = 0; i < ev.length - 1; i++) {
+      const a = ev[i], b = ev[i + 1];
+      if (!a.signal || !b.signal) continue;
+      if (a.signal !== b.signal && dist(a, b) > JUNCTION_M) continue;
+      if (b.t - (a.tEnd || a.t) > JUNCTION_MS) continue;
+      let drop = i + 1;
+      if (a.type === 'halt' && b.type === 'halt') {
+        a.wait += b.wait; a.halts = (a.halts || 1) + (b.halts || 1); a.tEnd = b.tEnd;
+        if (b.queued) a.queued = true;
+        if (a.rating == null && b.rating != null) a.rating = b.rating;
+        if (b.tags) a.tags = Array.from(new Set((a.tags || []).concat(b.tags)));
+      } else if (a.type === 'pass' && b.type === 'halt') {
+        drop = i;   // der Halt zählt, die Durchfahrt davor gehört dazu
+      }
+      ev.splice(drop, 1); i = Math.max(-1, i - 2); changed = true;
     }
     return changed;
   }
@@ -540,6 +669,7 @@
       const now = rec.trip.demo ? (rec.samples.length ? rec.samples[rec.samples.length - 1].t : rec.startedAt) : Date.now();
       const from = rec.trip.start || rec.startedAt;
       $('#drive-time').textContent = fmtDur(now - from);
+      if (!rec.trip.demo && rec.lastFixAt && Date.now() - rec.lastFixAt > GAP_MS) setDriveState('Kein GPS-Empfang, etwa im Tunnel. Die Lücke wird überbrückt.', '');
       updateCounters();
     }, 1000);
   }
@@ -558,8 +688,8 @@
     stopWatching();
     const trip = rec.trip;
     trip.end = rec.samples.length ? rec.samples[rec.samples.length - 1].t : Date.now();
-    assignQueueHalts(trip);
     if (!trip.start) trip.start = trip.end;
+    tidyTrip(trip);
     // Datenschutz: Ereignisse nahe Start und Ziel verwerfen
     const cut = Number(settings.cut) || 0;
     if (cut && rec.first && rec.last) {
@@ -603,11 +733,13 @@
     reviewTrip = trip;
     const halts = trip.events.filter((e) => e.type === 'halt' && e.signal);
     const passes = trip.events.filter((e) => e.type === 'pass').length;
-    const other = trip.events.filter((e) => e.type === 'halt' && !e.signal).length;
+    const atStop = trip.events.filter((e) => e.type === 'halt' && e.atStop).length;
+    const other = trip.events.filter((e) => e.type === 'halt' && !e.signal && !e.atStop).length;
     const wait = halts.reduce((a, e) => a + e.wait, 0);
+    const extra = [atStop ? `${atStop} Halt${atStop === 1 ? '' : 'e'} an Haltestellen` : '', other ? `${other} Halt${other === 1 ? '' : 'e'} ohne Ampel in der Nähe` : ''].filter(Boolean).join(' und ');
     $('#review-summary').textContent = halts.length
-      ? `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, zusammen ${fmtDur(wait)} Minuten gewartet. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt.${other ? ` Dazu ${other} Halt${other === 1 ? '' : 'e'} ohne Ampel in der Nähe.` : ''} Wie war es an den Ampeln?`
-      : `Kein Halt an einer Ampel. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt passiert.`;
+      ? `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, zusammen ${fmtDur(wait)} Minuten gewartet. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt.${extra ? ` Dazu ${extra}, die nicht als Ampelhalt zählen.` : ''} Wie war es an den Ampeln?`
+      : `Kein Halt an einer Ampel. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt passiert.${extra ? ` ${extra.charAt(0).toUpperCase() + extra.slice(1)}.` : ''}`;
     renderBilanz();
     renderReview();
     showView('review');
@@ -646,7 +778,10 @@
     const st = t.stats || {};
     const dur = (t.end || t.start) - t.start;
     const km = t.distance / 1000;
-    const avg = st.movingMs ? km / (st.movingMs / 3600000) : null;
+    const gaps = t.gaps || [];
+    const gapKm = gaps.reduce((a, g) => a + g.d, 0) / 1000;
+    const gapMs = gaps.reduce((a, g) => a + g.tEnd - g.t, 0);
+    const avg = st.movingMs ? (km - gapKm) / (st.movingMs / 3600000) : null;   // Tempo nur aus Abschnitten mit GPS
     const per100 = km >= 5 ? ` (${fmtNum((st.brakes || 0) / km * 100, 1)} je 100 km)` : '';
     const c = t.consumption || {};
     $('#review-bilanz').innerHTML = `<div class="card bilanz">
@@ -658,6 +793,7 @@
         <div class="kpi"><b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>
       </div>
       <p class="small">${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</p>
+      ${gaps.length ? `<p class="small">Ohne GPS-Empfang, etwa im Tunnel: ${fmtDur(gapMs)} min, rund ${fmtNum(gapKm, 1)} km Luftlinie überbrückt. Dort wird nichts gewertet.</p>` : ''}
       <label class="small" for="inp-consumption">Verbrauch laut Bordcomputer (freiwillig)</label>
       <div class="cons-row">
         <input id="inp-consumption" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 5,6" value="${c.value != null ? fmtNum(c.value, 1) : ''}">
@@ -869,7 +1005,7 @@
   }
   function flowColor(f) { return waitColor(45 * (1 - f / 100)); }   // gleiche Farbskala: grün fließt, rot hakt
   function cellLabel(a) {
-    if (a.signals.size) { const sig = [...a.signals][0]; const nm = names[sig] || oldNames[sig]; if (nm) return nm; }
+    if (a.signals.size) { const sig = [...a.signals][0]; const nm = nameOf(sig); if (nm) return nm; }
     const key = 'g' + a.k;
     return names[key] || 'Feld bei ' + cellCenter(a.k).lat.toFixed(4) + ', ' + cellCenter(a.k).lon.toFixed(4);
   }
@@ -1171,8 +1307,8 @@
   $('#app-version').textContent = VERSION;
   $('.proto').textContent = 'Prototyp ' + VERSION;   // zeigt zugleich: das Programm läuft
   clusters = buildClusters(signalCache.nodes);
-  // Ältere Fahrten einmalig nachbearbeiten (Rückstau-Halte ab 0.6.0)
-  if (trips.map((t) => assignQueueHalts(t)).some(Boolean)) saveTrips();
+  // Ältere Fahrten nachbearbeiten: Rückstau-Halte (ab 0.6.0), Kreuzungen und Warten vor der Abfahrt (ab 0.9.0)
+  if (trips.map((t) => tidyTrip(t)).some(Boolean)) saveTrips();
   updateSignalsInfo();
   renderLastTrip();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
