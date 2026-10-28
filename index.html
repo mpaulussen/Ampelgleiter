@@ -110,6 +110,7 @@
     <div class="drive-state" id="drive-state" role="status" aria-live="polite">Warte auf GPS …</div>
     <div class="speed"><span id="drive-speed">–</span><small>km/h</small></div>
     <p class="dir" id="drive-dir" aria-live="off"></p>
+    <p class="leg" id="drive-leg" hidden></p>
     <dl class="counters">
       <div><dt><svg class="ic" aria-hidden="true"><use href="#i-timer"/></svg><span id="lbl-drive-time">Fahrzeit</span></dt><dd id="drive-time">0:00</dd></div>
       <div><dt><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>Ampeln ohne Halt</span></dt><dd id="drive-pass">0</dd></div>
@@ -118,6 +119,14 @@
     </dl>
     <p class="gps"><svg class="ic" aria-hidden="true"><use href="#i-gps"/></svg><span id="drive-gps">GPS: –</span></p>
     <p class="msg warn" id="drive-warn" hidden></p>
+    <div class="transfer-row" id="transfer-row" hidden>
+      <button id="btn-transfer" class="btn big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-walk"/></svg>Umsteigen</button>
+      <div id="transfer-next" class="transfer-next" hidden>
+        <p class="small muted">Womit geht es weiter?</p>
+        <button id="btn-next-bahn" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-tram"/></svg>Weiter mit Stadtbahn</button>
+        <button id="btn-next-bus" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-bus"/></svg>Weiter mit Bus</button>
+      </div>
+    </div>
     <div class="end-row">
       <button id="btn-end" class="btn danger big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-stop"/></svg><span id="btn-end-label">Fahrt beenden</span></button>
       <button id="btn-end-confirm" class="btn danger big" type="button" hidden>Ja, beenden</button>

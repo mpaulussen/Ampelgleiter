@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.11.0';
+  const VERSION = '0.12.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -80,7 +80,8 @@
   let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35, access: { on: false, type: 'rollator' } }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
   // Haltestellen ab 0.9.0, Angaben zur Barrierefreiheit ab 0.10.0: Gebiete einmal neu laden
-  if (!signalCache.stops || !signalCache.acc) { signalCache.stops = signalCache.stops || {}; signalCache.acc = {}; signalCache.areas = []; }
+  // Haltestellennamen ab 0.12.0 (Umstiege)
+  if (!signalCache.stops || !signalCache.acc || signalCache.v !== 3) { signalCache.stops = {}; signalCache.acc = signalCache.acc || {}; signalCache.areas = []; signalCache.v = 3; }
   let names = store.get('names3', {});   // 'names3': Querstraßen ohne Bahnsteignamen (ab 0.9.0)
   const names2 = store.get('names2', {}); // mit Querstraße (0.6.0 bis 0.8.0)
   const oldNames = store.get('names', {}); // nur Straße (bis 0.5.0), als Übergang bis die neuen Namen da sind
@@ -179,6 +180,17 @@
     }
     return false;
   }
+  // Name der nächsten Haltestelle, für Umstiege
+  function stopName(p) {
+    let best = null, bd = 250;
+    for (const id in signalCache.stops) {
+      const [lat, lon, name] = signalCache.stops[id];
+      if (!name || Math.abs(lat - p.lat) > 0.003) continue;
+      const d = dist({ lat, lon }, p);
+      if (d < bd) { bd = d; best = name; }
+    }
+    return best;
+  }
   function areaCovers(p) {
     const now = Date.now();
     return signalCache.areas.some((a) => dist(a, p) < a.r - 1500 && now - a.fetched < 30 * 864e5);
@@ -206,7 +218,7 @@
             if (tg['traffic_signals:vibration']) a.v = tg['traffic_signals:vibration'];
             if (Object.keys(a).length) signalCache.acc[el.id] = a; else delete signalCache.acc[el.id];
           }
-          else signalCache.stops[el.id] = [round5(el.lat), round5(el.lon)];
+          else signalCache.stops[el.id] = tg.name ? [round5(el.lat), round5(el.lon), tg.name] : [round5(el.lat), round5(el.lon)];
         }
         signalCache.areas = signalCache.areas.filter((a) => dist(a, p) > 1000);
         signalCache.areas.push({ lat: round5(p.lat), lon: round5(p.lon), r: AREA_RADIUS, fetched: Date.now() });
@@ -349,6 +361,9 @@
     return {
       trip: { id: 't' + Date.now().toString(36), mode, start: null, end: null, distance: 0, events: [], gaps: [], demo: !!demo },
       cfg: MODES[mode],
+      curMode: mode,        // wechselt beim Umsteigen
+      transfer: null,       // laufender Umstieg
+      legStart: null,
       extra: extraClusters || [],
       samples: [],          // letzte Positionen {lat, lon, t, v}
       first: null, last: null,
@@ -439,8 +454,10 @@
         if (rec.slowSince == null) rec.slowSince = { t, lat: p.lat, lon: p.lon, heading };
         if (t - rec.slowSince.t >= STOP_CONFIRM_MS) {
           const s = rec.slowSince;
-          const atStop = (rec.trip.mode === 'bahn' || rec.trip.mode === 'bus') && nearStop(s);
-          const sig = atStop ? null : findSignal(s, s.heading, cfg.haltRadius);
+          // Bus und Bahn: die Haltestelle geht vor. Beim Umsteigen zu Fuß geht die Fußgängerampel vor.
+          const near = findSignal(s, s.heading, cfg.haltRadius);
+          const atStop = rec.transfer ? !near && nearStop(s) : (rec.curMode === 'bahn' || rec.curMode === 'bus') && nearStop(s);
+          const sig = atStop ? null : near;
           rec.stop = { t0: s.t, lat: s.lat, lon: s.lon, heading: s.heading, signal: sig, atStop };
           rec.fastSince = null;
         }
@@ -457,7 +474,9 @@
         rec.fastSince = null;
       }
     }
-    if (rec.stop) {
+    if (rec.transfer) {
+      setDriveState(`Umstieg · ${fmtDur(t - rec.transfer.t)}`, 'transfer');
+    } else if (rec.stop) {
       const label = rec.stop.signal ? 'Halt an Ampel' : rec.stop.atStop ? 'Halt an Haltestelle' : 'Halt';
       setDriveState(`${label} · ${fmtDur(t - rec.stop.t0)}`, 'halt');
     } else {
@@ -520,7 +539,7 @@
       if (rec.recentPass[c.id] && t - rec.recentPass[c.id] < 90000) continue;
       if (rec.lastHaltAt[c.id] && t - rec.lastHaltAt[c.id] < 180000) continue;
       rec.recentPass[c.id] = t;
-      rec.trip.events.push({ type: 'pass', signal: c.id, lat: round5(c.lat), lon: round5(c.lon), t, heading: heading == null ? null : Math.round(heading) });
+      rec.trip.events.push({ type: 'pass', signal: c.id, lat: round5(c.lat), lon: round5(c.lon), t, heading: heading == null ? null : Math.round(heading), mode: rec.curMode });
     }
   }
 
@@ -529,6 +548,7 @@
     rec.stop = null; rec.slowSince = null; rec.fastSince = null;
     const wait = tEnd - s.t0;
     if (wait < MIN_WAIT_MS) return;
+    if (s.atStop && rec.transfer) return;   // Warten am Bahnsteig steckt schon in der Umstiegszeit
     const sigId = s.signal ? s.signal.id : null;
     const ev = rec.trip.events;
     // Mehrere kurze Halte vor derselben Ampel (Rückstau) zu einem Wartevorgang zusammenfassen
@@ -556,6 +576,7 @@
       at: [round5(s.lat), round5(s.lon)]   // wo wirklich gestanden wurde, für spätere Auswertungen
     };
     if (s.atStop) e.atStop = true;
+    e.mode = rec.curMode;   // Verkehrsmittel des Abschnitts
     ev.push(e);
   }
 
@@ -701,6 +722,7 @@
     $('#drive-wait').textContent = '0:00';
     $('#drive-time').textContent = '0:00';
     resetEndButtons();
+    updateTransferUI();
     showView('drive');
     $$('.tabs button').forEach((b) => { b.disabled = true; });
     clearInterval(tick);
@@ -722,9 +744,58 @@
     $$('.tabs button').forEach((b) => { b.disabled = false; });
   }
 
+  // ---------- Umsteigen (Bus und Bahn) ----------
+  const isTransit = (m) => m === 'bus' || m === 'bahn';
+  const nowT = () => (rec.samples.length ? rec.samples[rec.samples.length - 1].t : Date.now());
+  function closeLeg(t) {
+    const legs = rec.trip.legs || (rec.trip.legs = []);
+    legs.push({ mode: rec.curMode, t0: rec.legStart != null ? rec.legStart : (rec.trip.start || t), t1: t });
+    rec.legStart = t;
+  }
+  function switchMode(mode) {
+    rec.curMode = mode; rec.cfg = MODES[mode];
+    rec.slowSince = null; rec.fastSince = null;
+  }
+  function startTransfer() {
+    if (!rec || rec.transfer || !isTransit(rec.curMode)) return;
+    const t = nowT();
+    if (rec.stop) endStop(t);   // die Bahn stand an der Haltestelle: dieser Halt endet mit dem Aussteigen
+    const p = rec.samples[rec.samples.length - 1] || rec.last || {};
+    closeLeg(t);
+    rec.transfer = { t, from: rec.curMode, lat: p.lat, lon: p.lon };
+    switchMode('fuss');
+    updateTransferUI();
+    setDriveState('Umstieg · 0:00', 'transfer');
+  }
+  function endTransfer(mode) {
+    if (!rec || !rec.transfer) return;
+    const t = nowT();
+    if (rec.stop) endStop(t);
+    closeLeg(t);
+    const tr = rec.transfer;
+    const item = { t: tr.t, tEnd: t, wait: t - tr.t, from: tr.from, to: mode };
+    if (tr.lat != null) { item.lat = round5(tr.lat); item.lon = round5(tr.lon); const n = stopName(tr); if (n) item.stop = n; }
+    (rec.trip.transfers = rec.trip.transfers || []).push(item);
+    rec.transfer = null;
+    switchMode(mode);
+    updateTransferUI();
+  }
+  function updateTransferUI() {
+    const show = rec && (isTransit(rec.curMode) || rec.transfer);
+    $('#transfer-row').hidden = !show;
+    $('#btn-transfer').hidden = !!(rec && rec.transfer);
+    $('#transfer-next').hidden = !(rec && rec.transfer);
+    const n = rec && rec.trip.legs ? rec.trip.legs.length + 1 : 1;
+    $('#drive-leg').hidden = !rec || n < 2;
+    if (rec) $('#drive-leg').textContent = rec.transfer ? `Abschnitt ${n} · Umstieg zu Fuß` : `Abschnitt ${n} · ${MODES[rec.curMode].label}`;
+  }
+
   function finishTrip() {
     if (!rec) return;
     if (rec.stop && rec.samples.length) endStop(rec.samples[rec.samples.length - 1].t);
+    // Abschnitte abschließen; ein offener Umstieg war keiner (man ist ausgestiegen und zu Fuß weiter)
+    if (rec.trip.legs) closeLeg(nowT());
+    rec.transfer = null;
     stopWatching();
     const trip = rec.trip;
     trip.end = rec.samples.length ? rec.samples[rec.samples.length - 1].t : Date.now();
@@ -778,9 +849,11 @@
     const other = trip.events.filter((e) => e.type === 'halt' && !e.signal && !e.atStop).length;
     const wait = halts.reduce((a, e) => a + e.wait, 0);
     const extra = [atStop ? `${atStop} Halt${atStop === 1 ? '' : 'e'} an Haltestellen` : '', other ? `${other} Halt${other === 1 ? '' : 'e'} ohne Ampel in der Nähe` : ''].filter(Boolean).join(' und ');
-    $('#review-summary').textContent = halts.length
-      ? `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, zusammen ${fmtDur(wait)} Minuten gewartet. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt.${extra ? ` Dazu ${extra}, die nicht als Ampelhalt zählen.` : ''} Wie war es an den Ampeln?`
-      : `Kein Halt an einer Ampel. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt passiert.${extra ? ` ${extra.charAt(0).toUpperCase() + extra.slice(1)}.` : ''}`;
+    const trs = trip.transfers || [];
+    const trText = trs.length ? ` ${trs.length} Umstieg${trs.length === 1 ? '' : 'e'}, zusammen ${durText(trs.reduce((x, r) => x + r.wait, 0))}.` : '';
+    $('#review-summary').textContent = (halts.length
+      ? `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, zusammen ${fmtDur(wait)} Minuten gewartet. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt.${extra ? ` Dazu ${extra}, die nicht als Ampelhalt zählen.` : ''}`
+      : `Kein Halt an einer Ampel. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt passiert.${extra ? ` ${extra.charAt(0).toUpperCase() + extra.slice(1)}.` : ''}`) + trText + (halts.length ? ' Wie war es an den Ampeln?' : '');
     renderBilanz();
     renderReview();
     showView('review');
@@ -814,6 +887,18 @@
     lines.push(`<p class="small muted">Schätzung mit ${fmtEuro(c.price)} je ${c.unit === 'kWh' ? 'kWh' : 'Liter'} (änderbar unter „Mehr“), ${c.unit === 'kWh' ? `${fmtNum(IDLE_KWH_PER_H, 1)} kWh je Stunde im Stand und ${fmtNum(RESTART_KWH, 2)} kWh` : `${fmtNum(IDLE_L_PER_H, 1)} l je Stunde Leerlauf und ${fmtNum(RESTART_L, 2)} l`} je Wiederanfahren.</p>`);
     return lines.join('');
   }
+  // Bus und Bahn: wohin die Zeit ging, und die Abschnitte der Fahrt
+  function transitFacts(t) {
+    const sum = (f) => t.events.reduce((a, e) => a + (e.type === 'halt' && f(e) ? e.wait : 0), 0);
+    const trs = t.transfers || [];
+    const legs = (t.legs || []).filter((l) => l.mode !== 'fuss' || !trs.some((r) => r.t === l.t0));
+    const chain = legs.length >= 2 ? `<p class="legs">${legs.map((l) => `<span>${ic(MODE_ICON[l.mode])}${esc(MODES[l.mode].label)}</span>`).join('<span class="arrow">→</span>')}</p>` : '';
+    return `${chain}<ul class="facts">
+      <li>${ic('pin')}<span>An Haltestellen</span><b>${durText(sum((e) => e.atStop))}</b></li>
+      <li>${ic('light')}<span>An Ampeln</span><b>${durText(sum((e) => e.signal))}</b></li>
+      ${trs.length ? `<li>${ic('walk')}<span>Umsteigen (${trs.length}×)</span><b>${durText(trs.reduce((a, r) => a + r.wait, 0))}</b></li>` : ''}
+    </ul>`;
+  }
   function renderBilanz() {
     const t = reviewTrip;
     const st = t.stats || {};
@@ -836,6 +921,7 @@
           ? `<div class="kpi">${ic('light')}<b>${t.events.filter((e) => e.type === 'halt' && e.signal).length}</b><span>Halte an Ampeln</span></div>`
           : `<div class="kpi">${ic('wave')}<b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>`}
       </div>
+      ${isTransit(t.mode) || (t.transfers || []).length ? transitFacts(t) : ''}
       ${walk ? '' : `<p class="note">${ic('alert')}<span>${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</span></p>`}
       ${gaps.length ? `<p class="note">${ic('gps')}<span>Ohne GPS-Empfang, etwa im Tunnel: ${fmtDur(gapMs)} min, rund ${fmtNum(gapKm, 1)} km Luftlinie überbrückt. Dort wird nichts gewertet.</span></p>` : ''}
       ${t.mode === 'auto' ? `      <label class="small" for="inp-consumption">Verbrauch laut Bordcomputer (freiwillig)</label>
@@ -881,7 +967,10 @@
         <details class="tag-box"${tags.length || openTags.has(idx) ? ' open' : ''} data-idx="${idx}"><summary>${ic('list')}Stichworte${tags.length ? ` (${tags.length})` : ''}</summary>
           <div class="tags" role="group" aria-label="Stichworte">${tagList.map((t) => `<button type="button" data-tag="${esc(t)}" aria-pressed="${tags.includes(t)}">${esc(t)}</button>`).join('')}</div></details>
       </article>`;
-    }).join('');
+    }).join('') + (reviewTrip.transfers || []).map((tr, i) => `<article class="rev transfer" data-tidx="${i}">
+        <div class="rev-head"><span class="chip sm amber">${ic('walk')}</span><div class="rev-title"><strong>Umstieg${tr.stop ? ' ' + esc(tr.stop) : ''}</strong><span class="small muted">${esc(MODES[tr.from].label)} → ${esc(MODES[tr.to].label)} · ${new Date(tr.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr</span></div><span class="rev-wait">${ic('hourglass')}${durText(tr.wait)}</span></div>
+        <button type="button" class="btn miss" data-missed aria-pressed="${!!tr.missed}">${ic('alert')}Anschluss verpasst</button>
+      </article>`).join('');
   }
   $('#review-list').addEventListener('toggle', (ev) => {
     const d = ev.target;
@@ -893,6 +982,14 @@
     const btn = ev.target.closest('button');
     const card = ev.target.closest('.rev');
     if (!btn || !card || !reviewTrip) return;
+    if (card.dataset.tidx != null) {
+      const tr = reviewTrip.transfers[Number(card.dataset.tidx)];
+      tr.missed = !tr.missed;
+      saveTrips(); renderReview();
+      const b = $(`#review-list .rev[data-tidx="${card.dataset.tidx}"] button[data-missed]`);
+      if (b) b.focus();
+      return;
+    }
     const e = reviewTrip.events[Number(card.dataset.idx)];
     if (btn.dataset.rate) {
       const r = Number(btn.dataset.rate);
@@ -984,7 +1081,7 @@
     });
     const tripList = list.slice().sort((a, b) => b.start - a.start).map((t) => {
       const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-      return `<div class="trip"><span class="chip sm">${ic(MODE_ICON[t.mode] || 'route')}</span><span class="trip-main">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}${(() => { const c = tripCosts(t); return c && c.energy != null ? ` · ${fmtEuro(c.energy)}` : ''; })()}</span></span>
+      return `<div class="trip"><span class="chip sm">${ic(MODE_ICON[t.mode] || 'route')}</span><span class="trip-main">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${(t.transfers || []).length ? ` · ${t.transfers.length} Umstieg${t.transfers.length === 1 ? '' : 'e'}` : ''}${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}${(() => { const c = tripCosts(t); return c && c.energy != null ? ` · ${fmtEuro(c.energy)}` : ''; })()}</span></span>
         <span class="trip-act"><button type="button" data-review="${t.id}">Ansehen</button><button type="button" data-del="${t.id}">Löschen</button></span></div>`;
     });
     const thead = '<thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead>';
@@ -1390,7 +1487,9 @@
     let extra = '';
     if (group === 'oepnv') {
       const atStops = ts.reduce((a, t) => a + t.events.reduce((b, e) => b + (e.atStop ? e.wait : 0), 0), 0);
-      extra = `${atStops ? `<ul class="facts"><li>${ic('pin')}<span>An Haltestellen</span><b>${durText(atStops)}</b></li><li>${ic('light')}<span>An Ampeln</span><b>${durText(wait)}</b></li></ul>` : ''}<p class="note">${ic('info')}<span>Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</span></p>`;
+      const trs = ts.reduce((a, t) => a.concat(t.transfers || []), []);
+      const missed = trs.filter((r) => r.missed).length;
+      extra = `${atStops || trs.length ? `<ul class="facts"><li>${ic('pin')}<span>An Haltestellen</span><b>${durText(atStops)}</b></li><li>${ic('light')}<span>An Ampeln</span><b>${durText(wait)}</b></li>${trs.length ? `<li>${ic('walk')}<span>Ø je Umstieg (${trs.length}×)</span><b>${durText(avgOf(trs.map((r) => r.wait)))}</b></li>` : ''}${missed ? `<li>${ic('alert')}<span>Anschluss verpasst</span><b>${missed}×</b></li>` : ''}</ul>` : ''}<p class="note">${ic('info')}<span>Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</span></p>`;
     }
     const mini = (icon, val, label) => `<div class="mini">${ic(icon)}<b>${val}</b><span>${label}</span></div>`;
     return `<div class="card">${head}<div class="minis">${mini('list', ts.length, ts.length === 1 ? w.one : w.many)}${mini('route', fmtNum(km, 1) + ' km', 'Strecke')}${mini('light', fmtNum(km ? halts / km : 0, 1), 'Ampelhalte je km')}${mini('hourglass', durText(wait / ts.length), 'Ø an Ampeln je ' + w.one)}</div>${extra}${later}</div>`;
@@ -1430,6 +1529,9 @@
 
   // ---------- Ereignisse ----------
   $('#btn-start').addEventListener('click', startTrip);
+  $('#btn-transfer').addEventListener('click', startTransfer);
+  $('#btn-next-bahn').addEventListener('click', () => endTransfer('bahn'));
+  $('#btn-next-bus').addEventListener('click', () => endTransfer('bus'));
   $$('input[name="mgroup"], input[name="pt"]').forEach((i) => i.addEventListener('change', () => {
     $('#pt-row').hidden = $('input[name="mgroup"]:checked').value !== 'oepnv';
     settings.mode = selectedMode(); store.set('settings', settings);

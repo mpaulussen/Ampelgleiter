@@ -191,3 +191,12 @@ summary::-webkit-details-marker{display:none}
 summary::after{content:"";margin-left:auto;width:8px;height:8px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);transition:transform .15s}
 details[open]>summary::after{transform:rotate(-135deg)}
 details.tag-box .tags{margin-top:4px}
+.transfer-row{display:flex;flex-direction:column;gap:8px}
+.transfer-next{display:flex;flex-direction:column;gap:8px}
+.leg{text-align:center;font-size:14px;font-weight:600;color:var(--muted);margin-top:-8px}
+.drive-state.transfer{background:var(--amber-tint);border-color:var(--amber)}
+.legs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:600;font-size:15px}
+.legs span{display:inline-flex;align-items:center;gap:6px}
+.legs .ic{color:var(--accent)}
+.legs .arrow{color:var(--muted);font-weight:400}
+.btn.miss[aria-pressed="true"]{background:var(--bad);border-color:var(--bad);color:#fff}
