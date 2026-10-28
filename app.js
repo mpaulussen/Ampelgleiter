@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.10.0';
+  const VERSION = '0.10.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -31,6 +31,25 @@
   const TAGS = ['zu lange gewartet', 'Grün zu kurz', 'unübersichtlich', 'Anschluss verpasst', 'alles gut'];
   const ACC_TAGS = ['Grün zu kurz zum Queren', 'kein Tonsignal', 'Taster schlecht erreichbar', 'Bordstein zu hoch'];   // Profil barrierefrei
   const ACCESS_LABEL = { rollstuhl: 'Rollstuhl', rollator: 'Rollator oder langsames Gehen', sehen: 'Sehbehinderung', andere: 'andere Einschränkung' };
+  // Zu Fuß ist man einen Weg gegangen, nicht gefahren
+  const WORDS = {
+    fahrt: { one: 'Fahrt', many: 'Fahrten', none: 'Noch keine Fahrt', start: 'Fahrt starten', end: 'Fahrt beenden', cont: 'Weiterfahren', time: 'Fahrzeit',
+      past: 'gefahren', bilanz: 'Fahrtbilanz', last: 'Letzte Fahrt', review: 'Wie war deine Fahrt?', short: 'Die Fahrt war zu kurz und wurde nicht gespeichert.',
+      hold: 'Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.', during: 'Während der Fahrt nichts antippen. Bewertet wird erst danach.' },
+    weg: { one: 'Weg', many: 'Wege', none: 'Noch kein Weg', start: 'Weg starten', end: 'Weg beenden', cont: 'Weitergehen', time: 'Gehzeit',
+      past: 'gegangen', bilanz: 'Wegbilanz', last: 'Letzter Weg', review: 'Wie war dein Weg?', short: 'Der Weg war zu kurz und wurde nicht gespeichert.',
+      hold: 'Handy in der Hand oder in der Tasche, App geöffnet lassen. Der Bildschirm bleibt an.', during: 'Unterwegs nichts antippen. Bewertet wird erst danach.' }
+  };
+  const words = (mode) => WORDS[mode === 'fuss' ? 'weg' : 'fahrt'];
+  function applyModeWords(mode) {
+    const w = words(mode);
+    $('#btn-start').textContent = w.start;
+    $('#hint-hold').textContent = w.hold;
+    $('#hint-during').textContent = w.during;
+    $('#btn-end').textContent = w.end;
+    $('#btn-end-cancel').textContent = w.cont;
+    $('#lbl-drive-time').textContent = w.time;
+  }
   const STEADY_MIN_V = 8.33;      // Gleichmäßigkeit zählt ab 30 km/h
   const STEADY_TOL = 1.39;        // ±5 km/h um das Mittel der letzten Minute
   const HARD_BRAKE = -3.0;        // starke Bremsung ab 3 m/s² Verzögerung
@@ -646,6 +665,7 @@
   function startTrip() {
     const mode = selectedMode();
     settings.mode = mode; store.set('settings', settings);
+    applyModeWords(mode);
     const msg = $('#start-msg');
     if (!('geolocation' in navigator)) { msg.textContent = 'Dieses Gerät bietet keinen Standortzugriff.'; return; }
     if (!window.isSecureContext) { msg.textContent = 'Standort geht nur über eine sichere Verbindung (https).'; return; }
@@ -731,7 +751,7 @@
     rec = null;
     if (!trip.events.length && trip.distance < 50) {
       showView('start');
-      $('#start-msg').textContent = 'Die Fahrt war zu kurz und wurde nicht gespeichert.';
+      $('#start-msg').textContent = words(trip.mode).short;
       return;
     }
     trips.push(trip);
@@ -747,6 +767,7 @@
   let reviewTrip = null;
   function openReview(trip) {
     reviewTrip = trip;
+    $('#h-review').textContent = words(trip.mode).review;
     const halts = trip.events.filter((e) => e.type === 'halt' && e.signal);
     const passes = trip.events.filter((e) => e.type === 'pass').length;
     const atStop = trip.events.filter((e) => e.type === 'halt' && e.atStop).length;
@@ -800,17 +821,20 @@
     const avg = st.movingMs ? (km - gapKm) / (st.movingMs / 3600000) : null;   // Tempo nur aus Abschnitten mit GPS
     const per100 = km >= 5 ? ` (${fmtNum((st.brakes || 0) / km * 100, 1)} je 100 km)` : '';
     const c = t.consumption || {};
+    const w = words(t.mode), walk = t.mode === 'fuss';
     $('#review-bilanz').innerHTML = `<div class="card bilanz">
-      <h3>Fahrtbilanz</h3>
+      <h3>${w.bilanz}</h3>
       <div class="kpis">
         <div class="kpi"><b>${fmtNum(km, 1)} km</b><span>Strecke</span></div>
-        <div class="kpi"><b>${fmtDur(dur)}</b><span>Fahrzeit${dur < 3600000 ? ' (min)' : ''}</span></div>
+        <div class="kpi"><b>${fmtDur(dur)}</b><span>${w.time}${dur < 3600000 ? ' (min)' : ''}</span></div>
         <div class="kpi"><b>${avg ? Math.round(avg) + ' km/h' : '–'}</b><span>Ø Tempo in Bewegung</span></div>
-        <div class="kpi"><b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>
+        ${walk
+          ? `<div class="kpi"><b>${t.events.filter((e) => e.type === 'halt' && e.signal).length}</b><span>Halte an Ampeln</span></div>`
+          : `<div class="kpi"><b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>`}
       </div>
-      <p class="small">${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</p>
+      ${walk ? '' : `<p class="small">${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</p>`}
       ${gaps.length ? `<p class="small">Ohne GPS-Empfang, etwa im Tunnel: ${fmtDur(gapMs)} min, rund ${fmtNum(gapKm, 1)} km Luftlinie überbrückt. Dort wird nichts gewertet.</p>` : ''}
-      <label class="small" for="inp-consumption">Verbrauch laut Bordcomputer (freiwillig)</label>
+      ${t.mode === 'auto' ? `      <label class="small" for="inp-consumption">Verbrauch laut Bordcomputer (freiwillig)</label>
       <div class="cons-row">
         <input id="inp-consumption" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 5,6" value="${c.value != null ? fmtNum(c.value, 1) : ''}">
         <select id="inp-unit" aria-label="Einheit">
@@ -819,7 +843,7 @@
         </select>
       </div>
       <p id="cons-msg" class="small muted" role="status" aria-live="polite"></p>
-      <div id="bilanz-costs" class="costs">${costHtml(t)}</div>
+      <div id="bilanz-costs" class="costs">${costHtml(t)}</div>` : ''}
     </div>`;
     const save = () => {
       const raw = $('#inp-consumption').value.trim().replace(',', '.');
@@ -832,6 +856,7 @@
       $('#cons-msg').textContent = `Gespeichert: ${fmtNum(reviewTrip.consumption.value, 1)} ${unit}/100 km.`;
       $('#bilanz-costs').innerHTML = costHtml(reviewTrip);
     };
+    if (t.mode !== 'auto') return;   // Verbrauch und Kosten nur fürs Auto
     $('#inp-consumption').addEventListener('change', save);
     $('#inp-unit').addEventListener('change', save);
   }
@@ -962,7 +987,7 @@
       ${worst ? `<div class="card worst"><h3>Deine nervigste Ampel</h3><p><strong>${esc(labelFor(worst.sample))}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><p class="small">${worst.halts}× gehalten, zusammen ${fmtDur(worst.wait)} min, längster Halt ${fmtDur(worst.maxWait)} min.</p></div>` : ''}
       <h3>Alle Ampeln</h3>
       <div class="tbl-wrap"><table><thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <h3>Fahrten</h3>
+      <h3>Fahrten und Wege</h3>
       <div class="list">${tripRows}</div>`;
     requestNames(ag.per.map((a) => a.sample), () => { if (!$('#view-stats').hidden) renderStats(); });
   }
@@ -1094,7 +1119,7 @@
     layer = L.layerGroup().addTo(map);
     $('#map-legend').textContent = mapMode === 'grid'
       ? 'Jedes Feld ist etwa 150 × 150 m groß. Grün: es fließt, rot: es hakt. Je kräftiger die Farbe, desto mehr Fahrten stehen dahinter. Tippe auf ein Feld für die Werte.'
-      : 'Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang. Tippe auf einen Kreis für die Werte je Fahrtrichtung.';
+      : 'Je größer der Kreis, desto länger wartest du dort im Schnitt. Farbe: grün kurz, rot lang. Tippe auf einen Kreis für die Werte je Richtung.';
     $('#map-window').hidden = mapMode !== 'grid';
     $('#map-insights').hidden = mapMode !== 'grid';
     if (mapMode === 'grid') {
@@ -1325,7 +1350,7 @@
         }
       }
     } else {
-      body = `<p>${cap(GROUP_WITH[group])} bist du diesen Weg noch nicht gefahren.</p>`;
+      body = `<p>${cap(GROUP_WITH[group])} bist du diesen Weg noch nicht ${words(group).past}.</p>`;
     }
     // Strecken-Vergleich: derselbe Weg mit verschiedenen Verkehrsmitteln
     const byMode = {};
@@ -1333,14 +1358,15 @@
     if (Object.keys(byMode).length >= 2) {
       body += `<p class="small">${Object.keys(byMode).map((m) => `${cap(GROUP_WITH[m])}: Ø ${durText(avgOf(byMode[m].map((t) => t.end - t.start)))} unterwegs, ${durText(avgOf(byMode[m].map(tripWait)))} an Ampeln`).join('<br>')}</p>`;
     }
-    return `<div class="card"><p class="kicker">Dein Weg · ${g.trips.length} Fahrten</p><h3>${esc(labelFor(g.first))} → ${esc(labelFor(g.last))}</h3>${body}</div>`;
+    return `<div class="card"><p class="kicker">Dein Weg · ${g.trips.length}× unterwegs</p><h3>${esc(labelFor(g.first))} → ${esc(labelFor(g.last))}</h3>${body}</div>`;
   }
   function modeCard(group) {
     const since = Date.now() - 30 * 864e5;
     const ts = trips.filter((t) => !t.demo && MODE_GROUP[t.mode] === group && t.start >= since);
     const head = `<h3>${cap(GROUP_WITH[group])} in den letzten 30 Tagen</h3>`;
     const later = group === 'oepnv' ? '<p class="small muted">Abfahrten und Verspätungen von moBiel zeigt Flowtown, sobald eine Datenquelle angebunden ist.</p>' : '';
-    if (!ts.length) return `<div class="card">${head}<p class="small">Noch keine Fahrt. Starte unten deine erste Aufzeichnung.</p>${later}</div>`;
+    const w = words(group);
+    if (!ts.length) return `<div class="card">${head}<p class="small">${w.none}. Starte unten deine erste Aufzeichnung.</p>${later}</div>`;
     const km = ts.reduce((a, t) => a + t.distance, 0) / 1000;
     const halts = ts.reduce((a, t) => a + t.events.filter((e) => e.type === 'halt' && e.signal).length, 0);
     const wait = ts.reduce((a, t) => a + tripWait(t), 0);
@@ -1349,7 +1375,7 @@
       const atStops = ts.reduce((a, t) => a + t.events.reduce((b, e) => b + (e.atStop ? e.wait : 0), 0), 0);
       extra = `<p class="small">${atStops ? `An Haltestellen ${durText(atStops)}, an Ampeln ${durText(wait)}. ` : ''}Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</p>`;
     }
-    return `<div class="card">${head}<p class="small">${ts.length} Fahrt${ts.length === 1 ? '' : 'en'}, ${fmtNum(km, 1)} km · ${fmtNum(km ? halts / km : 0, 1)} Ampelhalte je km · Ø ${durText(wait / ts.length)} an Ampeln je Fahrt</p>${extra}${later}</div>`;
+    return `<div class="card">${head}<p class="small">${ts.length} ${ts.length === 1 ? w.one : w.many}, ${fmtNum(km, 1)} km · ${fmtNum(km ? halts / km : 0, 1)} Ampelhalte je km · Ø ${durText(wait / ts.length)} an Ampeln je ${w.one}</p>${extra}${later}</div>`;
   }
   function accessCard() {
     const ids = new Set();
@@ -1358,7 +1384,7 @@
     for (const id of ids) { const c = clusterById[id]; if (c && c.sound === 'yes') yes++; else if (c && c.sound === 'no') no++; else unk++; }
     return `<div class="card"><h3>Barrierefrei unterwegs</h3>
       <p class="small">${ids.size ? `Von ${ids.size} Ampeln auf deinen Wegen haben laut OpenStreetMap ${yes} ein Tonsignal, ${no} keins. Bei ${unk} fehlt die Angabe.` : 'Nach den ersten Fahrten siehst du hier, welche Ampeln auf deinen Wegen ein Tonsignal haben.'}</p>
-      <p class="small">Nach jeder Fahrt gibt es zusätzliche Stichworte wie „Grün zu kurz zum Queren“. Deine Fahrten tragen den Hinweis „${esc(ACCESS_LABEL[settings.access.type])}“, damit sich Wartezeiten mit Einschränkung getrennt auswerten lassen. Das bleibt auf deinem Gerät.</p></div>`;
+      <p class="small">Bei der Bewertung gibt es zusätzliche Stichworte wie „Grün zu kurz zum Queren“. Deine Aufzeichnungen tragen den Hinweis „${esc(ACCESS_LABEL[settings.access.type])}“, damit sich Wartezeiten mit Einschränkung getrennt auswerten lassen. Das bleibt auf deinem Gerät.</p></div>`;
   }
   function renderToday() {
     const group = MODE_GROUP[selectedMode()];
@@ -1369,7 +1395,7 @@
     if (routes.some(own)) routes = routes.filter(own);   // Wege mit anderen Verkehrsmitteln nur, solange es keine eigenen gibt
     const html = routes.length
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
-      : ['<div class="card"><h3>Deine Wege</h3><p class="small">Nach zwei, drei Fahrten auf derselben Strecke erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>'];
+      : ['<div class="card"><h3>Deine Wege</h3><p class="small">Wenn du dieselbe Strecke zwei-, dreimal zurückgelegt hast, erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>'];
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
     $('#today').innerHTML = html.join('');
@@ -1380,7 +1406,7 @@
     const el = $('#last-trip');
     if (!t) { el.innerHTML = ''; return; }
     const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-    el.innerHTML = `<div class="card"><h3>Letzte Fahrt</h3><p class="small">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : ''} · ${h.length} Halte an Ampeln · ${fmtDur(h.reduce((a, e) => a + e.wait, 0))} min gewartet</p></div>`;
+    el.innerHTML = `<div class="card"><h3>${words(t.mode).last}</h3><p class="small">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : ''} · ${h.length} Halte an Ampeln · ${fmtDur(h.reduce((a, e) => a + e.wait, 0))} min gewartet</p></div>`;
   }
 
   // ---------- Ereignisse ----------
@@ -1388,6 +1414,7 @@
   $$('input[name="mgroup"], input[name="pt"]').forEach((i) => i.addEventListener('change', () => {
     $('#pt-row').hidden = $('input[name="mgroup"]:checked').value !== 'oepnv';
     settings.mode = selectedMode(); store.set('settings', settings);
+    applyModeWords(settings.mode);
     renderToday();
   }));
   const saveAccess = () => {
@@ -1442,6 +1469,7 @@
 
   // ---------- Start ----------
   setModeUI(settings.mode);
+  applyModeWords(settings.mode);
   $('#inp-access').checked = !!settings.access.on;
   $('#inp-access-type').value = settings.access.type;
   $('#inp-access-type').hidden = !settings.access.on;

@@ -55,9 +55,9 @@
     <div class="card hints">
       <h3>So klappt die Aufzeichnung</h3>
       <ul>
-        <li>Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.</li>
-        <li>Während der Fahrt nichts antippen. Bewertet wird erst danach.</li>
-        <li>Gespeichert werden nur Halte und Durchfahrten an Ampeln, nie Start und Ziel.</li>
+        <li id="hint-hold">Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.</li>
+        <li id="hint-during">Während der Fahrt nichts antippen. Bewertet wird erst danach.</li>
+        <li>Gespeichert werden nur Halte an Ampeln und Ampeln ohne Halt, nie Start und Ziel.</li>
       </ul>
     </div>
     <div id="last-trip"></div>
@@ -70,7 +70,7 @@
     <div class="speed"><span id="drive-speed">–</span><small>km/h</small></div>
     <p class="dir" id="drive-dir" aria-live="off"></p>
     <dl class="counters">
-      <div><dt>Fahrzeit</dt><dd id="drive-time">0:00</dd></div>
+      <div><dt id="lbl-drive-time">Fahrzeit</dt><dd id="drive-time">0:00</dd></div>
       <div><dt>Ampeln ohne Halt</dt><dd id="drive-pass">0</dd></div>
       <div><dt>Halte an Ampeln</dt><dd id="drive-halts">0</dd></div>
       <div><dt>Wartezeit</dt><dd id="drive-wait">0:00</dd></div>
