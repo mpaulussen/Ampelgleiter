@@ -18,17 +18,16 @@
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-html,body{margin:0;height:100%}
-@supports (height:100dvh){body{height:100dvh}}
+html,body{margin:0}
 button,label,select,.btn{touch-action:manipulation;-webkit-tap-highlight-color:rgba(0,0,0,.08)}
-body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
-.top{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));background:var(--nav);color:var(--on-nav)}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:block;min-height:100vh}
+.top{position:sticky;top:0;z-index:1100;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));background:var(--nav);color:var(--on-nav)}
 .top h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.01em}
 .logo{width:40px;height:14px;flex:none}
 .sprite{position:absolute;width:0;height:0;overflow:hidden}
 .ic{width:1.25em;height:1.25em;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.25em}
 .proto{margin-left:auto;font-size:12px;padding:2px 8px;border:1px solid rgba(230,236,241,.4);border-radius:999px}
-main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+main{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}   /* Platz für die feste Menüleiste */
 .view{max-width:640px;margin:0 auto;padding:16px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:16px}
 h2{font-size:26px;margin:0;line-height:1.2;letter-spacing:-.01em}
 h3{font-size:17px;margin:0 0 6px}
@@ -157,12 +156,12 @@ td{font-variant-numeric:tabular-nums}
 .trip button{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:6px 10px;min-height:36px;cursor:pointer}
 .badge{font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;background:var(--warn-bg);margin-left:6px}
 
-.view-map{max-width:none;height:100%}
-#map{flex:1;min-height:360px;border-radius:12px;border:1px solid var(--line)}
+.view-map{max-width:none}
+#map{height:62vh;min-height:360px;border-radius:12px;border:1px solid var(--line)}
 .row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px}
 select{font:inherit;min-height:44px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 
-.tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--nav);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:1100;display:grid;grid-template-columns:repeat(5,1fr);background:var(--nav);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
 .tabs button{font:inherit;font-size:12px;font-weight:600;min-height:60px;border:0;background:transparent;color:var(--on-nav);opacity:.7;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
 .tabs button .ic{width:24px;height:24px}
 .tabs button[aria-current="page"]{opacity:1;box-shadow:inset 0 3px 0 var(--amber)}

@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.14.1';
+  const VERSION = '0.14.2';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1407,7 +1407,7 @@
     if (name === 'more') updateSignalsInfo();
     const h = $('#view-' + name + ' h2');
     if (h && name !== 'drive') { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
-    $('#main').scrollTop = 0;
+    window.scrollTo(0, 0);
   }
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
 
@@ -1772,9 +1772,14 @@
     }
     for (const g of Object.values(groups)) g.km = Math.round(g.km * 10) / 10;
     const ag = aggregate(list);
+    // wie belastbar ein Wert ist, nach Zahl der Fahrten dahinter
+    const sure = (n) => (n >= 6 ? 'hoch' : n >= 3 ? 'mittel' : 'niedrig (erster Eindruck)');
+    const minWeek = (ms, perWeek) => Math.round(ms * perWeek / 6000) / 10;
+    const ersparnisse = [];
     const zeitfresser = ag.approaches.filter((x) => x.halts).sort((x, y) => y.wait - x.wait).slice(0, 5).map((x) => {
       const o = othersAt(x.signal, x.h);
       return { ampel: labelFor(x.sample), richtung: x.h != null ? dirShort(x.h) : null, vorbeigekommen: x.halts + x.passes, gehalten: x.halts, warten_gesamt_s: s(x.wait),
+        sicherheit: sure(x.halts + x.passes),
         andere: o ? { personen: o.n, anteil_mit_halt: Math.round(o.share * 100) / 100, warten_je_halt_s: s(o.avg) } : undefined };
     });
     const wege = findRoutes(list).slice(0, 3).map((g) => {
@@ -1783,13 +1788,28 @@
       const km = avgOf(g.trips.map((t) => t.distance)) / 1000;
       const out = { von: labelFor(g.first), nach: labelFor(g.last), km: Math.round(km * 10) / 10, gemessen: {} };
       for (const m of Object.keys(byMode)) out.gemessen[m] = { fahrten: byMode[m].length, dauer_min: Math.round(avgOf(byMode[m].map((t) => t.end - t.start)) / 6000) / 10, warten_an_ampeln_s: s(avgOf(byMode[m].map(tripWait))) };
-      if (!byMode.rad && km <= 15) out.rad_geschaetzt_min = Math.round(km / BIKE_KMH * 600) / 10;
+      if (!byMode.rad && km <= 15) { out.rad_geschaetzt_min_ohne_ampeln = Math.round(km / BIKE_KMH * 600) / 10; out.rad_ampeln_unbekannt = true; }
       if (!byMode.fuss && km <= 3) out.zu_fuss_geschaetzt_min = Math.round(km / WALK_KMH * 600) / 10;
       const bh = bestHour(byMode.auto || g.trips);
       if (bh.text) out.beste_abfahrt = { stunde: bh.best, warten_s: s(bh.bestAvg), sonst_s: s(bh.ref) };
       // wie oft und wann: Abfahrten je Stunde mit Ø Wartezeit an Ampeln
       const inMonth = g.trips.filter((t) => t.start >= since).length;
-      out.fahrten_pro_woche = Math.round(inMonth / (30 / 7) * 10) / 10;
+      const perWeek = inMonth / (30 / 7);
+      out.fahrten_pro_woche = Math.round(perWeek * 10) / 10;
+      // Ersparnisse rechnet die App selbst, die KI wählt nur aus
+      const name = `${out.von} → ${out.nach}`;
+      if (bh.text) {
+        const base = byMode.auto || g.trips;
+        const nBest = base.filter((t) => new Date(t.start).getHours() === bh.best).length;
+        ersparnisse.push({ weg: name, was: `Abfahrt zwischen ${bh.best} und ${bh.best + 1} Uhr`, je_fahrt_s: s(bh.ref - bh.bestAvg),
+          minuten_pro_woche: minWeek(bh.ref - bh.bestAvg, perWeek), sicherheit: sure(Math.min(nBest, base.length - nBest)) });
+      }
+      const ownMs = byMode.auto ? avgOf(byMode.auto.map((t) => t.end - t.start)) : byMode.oepnv ? avgOf(byMode.oepnv.map((t) => t.end - t.start)) : null;
+      if (ownMs && out.rad_geschaetzt_min_ohne_ampeln) {
+        const diff = ownMs - out.rad_geschaetzt_min_ohne_ampeln * 60000;
+        ersparnisse.push({ weg: name, was: `Rad statt ${byMode.auto ? 'Auto' : 'Bus und Bahn'}`, je_fahrt_s: s(diff), minuten_pro_woche: minWeek(diff, perWeek),
+          sicherheit: 'niedrig (Rad nur geschätzt, ohne Ampeln)', hinweis: Math.abs(diff) < 60000 ? 'etwa gleich schnell' : diff < 0 ? 'mit dem Rad langsamer' : 'mit dem Rad schneller' });
+      }
       const hours = {};
       for (const t of g.trips) { const h = new Date(t.start).getHours(); (hours[h] = hours[h] || []).push(tripWait(t)); }
       out.abfahrten = Object.keys(hours).map(Number).sort((x, y) => x - y).map((h) => ({ stunde: h, fahrten: hours[h].length, warten_an_ampeln_s: s(avgOf(hours[h])) }));
@@ -1809,6 +1829,7 @@
       app_hinweise: computeTips().filter((x) => x.icon !== 'bell').map((x) => plain(x.title) + ': ' + plain(x.short)),
       fahrweise_auto: steady.length ? { gleichmaessig_anteil: Math.round(avgOf(steady) * 100) / 100, starke_bremsungen_je_100km: carKm ? Math.round(car.reduce((x, t) => x + (t.stats.brakes || 0), 0) / carKm * 1000) / 10 : null } : null,
       kosten_ampelhalte_eur_geschaetzt: costs.length ? Math.round(costs.reduce((x, c) => x + c.halts, 0) * 100) / 100 : null,
+      moegliche_ersparnisse: ersparnisse,
       umstiege: trs.length ? { anzahl: trs.length, warten_je_umstieg_s: s(avgOf(trs.map((r) => r.wait))), anschluss_verpasst: trs.filter((r) => r.missed).length } : null
     };
   }
