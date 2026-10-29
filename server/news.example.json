@@ -1,0 +1,13 @@
+[
+  {
+    "id": "2026-10-29-werner-bock",
+    "titel": "Sperrung Werner-Bock-Straße stadtauswärts",
+    "text": "Umleitung über die Stapenhorststraße.",
+    "quelle": "Stadt Bielefeld",
+    "lat": 52.0253,
+    "lon": 8.54816,
+    "radius_m": 300,
+    "von": "2026-10-29",
+    "bis": "2026-11-15"
+  }
+]

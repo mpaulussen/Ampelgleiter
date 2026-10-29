@@ -1,0 +1,20 @@
+[Unit]
+Description=Flowtown-Server (Ebene Wir, KI-Einschätzung, Meldungen)
+After=network.target
+
+[Service]
+Type=simple
+User=flowtown
+EnvironmentFile=/etc/flowtown.env
+WorkingDirectory=/opt/flowtown/server
+ExecStart=/usr/bin/node /opt/flowtown/server/flowtown-server.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/flowtown
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -54,6 +54,8 @@
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
   <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.6A3.5 3.5 0 0 0 7 18.5z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4"/></symbol>
 </svg>
 <header class="top">
@@ -188,6 +190,18 @@
         <button id="btn-export-csv" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Halte exportieren (CSV)</button>
         <label class="btn file-btn"><svg class="ic" aria-hidden="true"><use href="#i-upload"/></svg>Daten importieren<input id="inp-import" type="file" accept="application/json,.json"></label>
       </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-cloud"/></svg></span><h3>Flowtown-Server</h3></div>
+      <label class="field" for="inp-server">Adresse des Servers
+        <input id="inp-server" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…/flowtown-api">
+      </label>
+      <p class="small muted" id="server-status" role="status" aria-live="polite"></p>
+      <label class="check"><input type="checkbox" id="inp-wir"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg> Fahrten anonym beitragen</label>
+      <p class="small">Ebene „Wir“: Gesendet werden je Ampel nur Richtung, Zeitfenster und Wartezeit. Keine Uhrzeiten, keine Start- und Zielorte. Werte anderer siehst du erst, wenn mindestens fünf Personen an einer Ampel waren.</p>
+      <label class="check"><input type="checkbox" id="inp-ki"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg> KI-Einschätzung erlauben</label>
+      <p class="small">Auf Knopfdruck gehen zusammengefasste Werte deiner Tipps über den Server an Mistral (EU): Wartezeiten, Straßennamen der Ampeln, Wegdauern, Kosten. Keine Koordinaten, keine Start- und Zielorte. Gespeichert wird dabei nichts.</p>
+      <button id="btn-server-test" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Verbindung prüfen</button>
     </div>
     <div class="card">
       <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-euro"/></svg></span><h3>Preise für die Kostenschätzung</h3></div>

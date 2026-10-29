@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.13.0';
+  const VERSION = '0.14.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -77,7 +77,7 @@
     set(k, v) { try { localStorage.setItem('ww.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   };
   let trips = store.get('trips', []);
-  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35, access: { on: false, type: 'rollator' } }, store.get('settings', {}));
+  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35, access: { on: false, type: 'rollator' }, server: { url: '', wir: false, ki: false } }, store.get('settings', {}));
   let signalCache = store.get('signals', { areas: [], nodes: {} });
   // Haltestellen ab 0.9.0, Angaben zur Barrierefreiheit ab 0.10.0: Gebiete einmal neu laden
   // Haltestellennamen ab 0.12.0 (Umstiege)
@@ -838,6 +838,7 @@
     }
     trips.push(trip);
     saveTrips();
+    flushWir(trip);
     openReview(trip);
   }
 
@@ -1532,6 +1533,72 @@
     $('#today').innerHTML = html.join('');
   }
 
+  // ---------- Flowtown-Server: Ebene „Wir“, KI-Einschätzung, Meldungen ----------
+  const apiBase = () => (settings.server.url || '').trim().replace(/\/+$/, '');
+  async function api(pathPart, opts) {
+    const res = await fetchWithTimeout(apiBase() + pathPart, opts || {}, pathPart === '/api/ki' ? 45000 : 15000);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.fehler || 'HTTP ' + res.status);
+    return j;
+  }
+  const postJson = (pathPart, body) => api(pathPart, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  function contributorId() {
+    if (!settings.cid) {
+      const b = new Uint8Array(16); crypto.getRandomValues(b);
+      settings.cid = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+      store.set('settings', settings);
+    }
+    return settings.cid;
+  }
+  // Nur Ampel, Richtung (Achtel), Zeitfenster, Wartezeit; Fahrten, Orte und Uhrzeiten bleiben auf dem Gerät
+  const wirItems = (t) => t.events.filter((e) => e.signal && /^c\d+$/.test(e.signal)).map((e) => ({
+    s: e.signal, d: e.heading == null ? -1 : Math.round(e.heading / 45) % 8, w: timeWindow(e.t), wait: e.type === 'halt' ? e.wait : 0, halt: e.type === 'halt'
+  }));
+  async function flushWir(trip) {
+    if (!apiBase() || !settings.server.wir) return;
+    const queue = store.get('wirQueue', []);
+    if (trip && !trip.demo) queue.push(trip.id);
+    const left = [];
+    for (const id of queue.slice(-50)) {
+      const t = trips.find((x) => x.id === id);
+      if (!t) continue;
+      try { await postJson('/api/wir', { cid: contributorId(), items: wirItems(t) }); } catch (e) { left.push(id); }
+    }
+    store.set('wirQueue', left);
+  }
+  let wirCache = null, wirAt = 0, newsCache = [], newsAt = 0;
+  async function loadWir() {
+    if (!apiBase() || !settings.server.wir) return null;
+    if (wirCache && Date.now() - wirAt < 600000) return wirCache;
+    const ids = Array.from(new Set([].concat(...trips.map((t) => t.events.filter((e) => e.signal && /^c\d+$/.test(e.signal)).map((e) => e.signal))))).slice(0, 400);
+    if (!ids.length) return null;
+    try { wirCache = (await api('/api/wir?s=' + ids.join(','))).werte || {}; wirAt = Date.now(); } catch (e) { /* ohne Server weiter */ }
+    return wirCache;
+  }
+  // Werte anderer für eine Ampel in einer Richtung, über alle Zeitfenster
+  function othersAt(signal, heading) {
+    if (!wirCache) return null;
+    const d = heading == null ? -1 : Math.round(heading / 45) % 8;
+    let v = 0, h = 0, w = 0, n = 0;
+    for (const k in wirCache) {
+      const [s, dd] = k.split('|');
+      if (s !== signal || Number(dd) !== d) continue;
+      const x = wirCache[k]; v += x.v; h += x.h; w += x.avg * x.h; n = Math.max(n, x.n);
+    }
+    return v ? { n, share: h / v, avg: h ? w / h : 0 } : null;
+  }
+  async function loadNews() {
+    if (!apiBase()) { newsCache = []; return; }
+    if (Date.now() - newsAt < 600000) return;
+    try { newsCache = (await api('/api/news')).meldungen || []; newsAt = Date.now(); } catch (e) { /* ohne Server weiter */ }
+  }
+  // Meldungen nur, wenn sie die eigenen Wege betreffen (oder für die ganze Stadt gelten); geprüft wird auf dem Gerät
+  function myNews() {
+    const pts = [];
+    for (const t of trips) if (!t.demo) for (const e of t.events) if (e.signal) pts.push(e);
+    return newsCache.filter((n) => n.lat == null || n.lon == null || pts.some((q) => dist(q, n) <= (n.radius_m || 300)));
+  }
+
   // ---------- Tipps: feste Auswertung auf dem Gerät, noch ohne KI ----------
   const BIKE_KMH = 15, WALK_KMH = 4.8;   // Annahmen für Schätzungen
   const median = (xs) => { const v = xs.slice().sort((x, y) => x - y), m = Math.floor(v.length / 2); return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
@@ -1607,7 +1674,7 @@
     const what = top.length === 1 ? 'eine Ampel' : `${top.length} Ampeln`;
     return { prio: 2, icon: 'hourglass', cls: 'bad', title: 'Deine größten Zeitfresser',
       short: `${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}.`,
-      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => `<li>${ic('light')}<span>${esc(labelFor(x.sample))}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}</span><b>${durText(x.wait)}</b></li>`).join('')}</ul>` };
+      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => { const o = othersAt(x.signal, x.h); return `<li>${ic('light')}<span>${esc(labelFor(x.sample))}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}${o ? `<span class="others">Andere (${o.n}): ${fmtPct(o.share)} mit Halt, Ø ${durText(o.avg)}</span>` : ''}</span><b>${durText(x.wait)}</b></li>`; }).join('')}</ul>` };
   }
   // Autofahrten: Wartezeit an Ampeln je km nach Zeitfenster
   function tipWindows(list) {
@@ -1649,18 +1716,97 @@
       short: `Ampelhalte kosteten dich etwa ${fmtEuro(halts)}.`,
       html: `<p>Leerlauf und Wiederanfahren an Ampeln kosteten dich bei ${cs.length} Autofahrt${cs.length === 1 ? '' : 'en'} etwa <strong>${fmtEuro(halts)}</strong>.</p>` };
   }
+  function tipNews() {
+    const ns = myNews();
+    if (!ns.length) return null;
+    return { prio: -1, icon: 'bell', cls: 'amber', title: 'Meldungen für deine Wege', short: `${esc(ns[0].titel)}${ns.length > 1 ? ` und ${ns.length - 1} weitere Meldung${ns.length > 2 ? 'en' : ''}` : ''}.`,
+      html: `<ul class="ki-list">${ns.map((n) => `<li>${ic('bell')}<span><strong>${esc(n.titel)}</strong>${n.text ? `<br>${esc(n.text)}` : ''}${n.quelle ? `<br><span class="small muted">Quelle: ${esc(n.quelle)}${n.bis ? ` · bis ${esc(n.bis)}` : ''}</span>` : ''}</span></li>`).join('')}</ul>` };
+  }
   function computeTips() {
     const list = trips.filter((t) => !t.demo);
-    return [tipAnomalies(list)].concat(tipRoutes(list), [tipTimeEaters(list), tipWindows(list), tipStyle(list), tipCosts(list)])
+    return [tipNews(), tipAnomalies(list)].concat(tipRoutes(list), [tipTimeEaters(list), tipWindows(list), tipStyle(list), tipCosts(list)])
       .filter(Boolean).sort((x, y) => x.prio - y.prio);
   }
   function renderTips() {
     const tips = computeTips();
-    const news = `<div class="card">${cardHead('bell', 'Meldungen', 'Sperrungen, Baustellen, Ausfälle')}<p class="small">Meldungen der Stadt und von moBiel zu deinen Wegen erscheinen hier, sobald der Flowtown-Server angebunden ist. Angezeigt wird nur, was deine Wege betrifft.</p></div>`;
-    $('#tips-body').innerHTML = (tips.length
+    const news = myNews().length ? '' : `<div class="card">${cardHead('bell', 'Meldungen', 'Sperrungen, Baustellen, Ausfälle')}<p class="small">${apiBase() ? 'Gerade keine Meldungen für deine Wege.' : 'Meldungen der Stadt und von moBiel zu deinen Wegen erscheinen hier, sobald der Flowtown-Server unter „Mehr“ eingetragen ist.'} Angezeigt wird nur, was deine Wege betrifft.</p></div>`;
+    $('#tips-body').innerHTML = kiCard() + (tips.length
       ? tips.map((x) => `<div class="card">${cardHead(x.icon, x.title, x.meta || '', x.cls)}${x.html}</div>`).join('')
       : `<div class="card">${cardHead('bulb', 'Noch zu wenig Daten')}<p class="small">Nach ein paar Fahrten auf deinen üblichen Wegen findest du hier deine Zeitfresser, die besten Abfahrtszeiten und Alternativen mit Rad oder zu Fuß.</p></div>`) + news;
-    requestNames(trips.flatMap((t) => t.events.filter((e) => e.signal)), () => { if (!$('#view-tips').hidden) renderTips(); });
+    requestNames([].concat(...trips.map((t) => t.events.filter((e) => e.signal))), () => { if (!$('#view-tips').hidden) renderTips(); });
+    // Werte anderer und Meldungen nachladen, dann einmal neu zeichnen
+    if (!tipsLoading && apiBase() && (Date.now() - newsAt > 600000 || (settings.server.wir && Date.now() - wirAt > 600000))) {
+      tipsLoading = true;
+      Promise.all([loadNews(), loadWir()]).then(() => { if (!$('#view-tips').hidden) renderTips(); }).finally(() => { tipsLoading = false; });
+    }
+  }
+  let tipsLoading = false;
+  // ---------- KI-Einschätzung ----------
+  const kiState = { busy: false, error: '', result: store.get('ki', null) };
+  function kiCard() {
+    if (!apiBase()) return '';
+    if (!settings.server.ki) return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}<p class="small">Erlaube die KI-Einschätzung unter „Mehr“, dann formuliert eine KI aus deinen Werten persönliche Empfehlungen.</p></div>`;
+    const r = kiState.result;
+    const body = r ? `<p>${esc(r.einschaetzung)}</p><ul class="ki-list">${r.empfehlungen.map((e) => `<li>${ic('bulb')}<span><strong>${esc(e.titel)}</strong><br>${esc(e.text)}</span></li>`).join('')}</ul>
+      <p class="note">${ic('info')}<span>KI-Text von ${esc(r.modell || 'Mistral')}, erstellt am ${esc(dayLabel(r.t))} Er kann Fehler enthalten.</span></p>` : '<p class="small">Eine KI formuliert aus deinen zusammengefassten Werten eine Einschätzung und Empfehlungen.</p>';
+    return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}${body}${kiState.error ? `<p class="msg warn">${esc(kiState.error)}</p>` : ''}
+      <button type="button" class="btn${r ? '' : ' primary'}" id="btn-ki" ${kiState.busy ? 'disabled' : ''}>${ic('spark')}${kiState.busy ? 'Einschätzung wird erstellt …' : r ? 'Neu einschätzen' : 'Einschätzung holen'}</button></div>`;
+  }
+  // Zusammengefasste Werte für die KI: keine Koordinaten, keine Uhrzeiten einzelner Fahrten, keine Start- und Zielorte
+  function kiFacts() {
+    const list = trips.filter((t) => !t.demo);
+    const since = Date.now() - 30 * 864e5;
+    const recent = list.filter((t) => t.start >= since);
+    const s = (ms) => Math.round(ms / 1000);
+    const groups = {};
+    for (const t of recent) {
+      const g = groups[MODE_GROUP[t.mode]] || (groups[MODE_GROUP[t.mode]] = { fahrten: 0, km: 0, warten_an_ampeln_s: 0, halte_an_ampeln: 0 });
+      g.fahrten++; g.km += t.distance / 1000; g.warten_an_ampeln_s += s(tripWait(t)); g.halte_an_ampeln += t.events.filter((e) => e.type === 'halt' && e.signal).length;
+    }
+    for (const g of Object.values(groups)) g.km = Math.round(g.km * 10) / 10;
+    const ag = aggregate(list);
+    const zeitfresser = ag.approaches.filter((x) => x.halts).sort((x, y) => y.wait - x.wait).slice(0, 5).map((x) => {
+      const o = othersAt(x.signal, x.h);
+      return { ampel: labelFor(x.sample), richtung: x.h != null ? dirShort(x.h) : null, vorbeigekommen: x.halts + x.passes, gehalten: x.halts, warten_gesamt_s: s(x.wait),
+        andere: o ? { personen: o.n, anteil_mit_halt: Math.round(o.share * 100) / 100, warten_je_halt_s: s(o.avg) } : undefined };
+    });
+    const wege = findRoutes(list).slice(0, 3).map((g) => {
+      const byMode = {};
+      for (const t of g.trips) (byMode[MODE_GROUP[t.mode]] = byMode[MODE_GROUP[t.mode]] || []).push(t);
+      const km = avgOf(g.trips.map((t) => t.distance)) / 1000;
+      const out = { von: labelFor(g.first), nach: labelFor(g.last), km: Math.round(km * 10) / 10, gemessen: {} };
+      for (const m of Object.keys(byMode)) out.gemessen[m] = { fahrten: byMode[m].length, dauer_min: Math.round(avgOf(byMode[m].map((t) => t.end - t.start)) / 6000) / 10, warten_an_ampeln_s: s(avgOf(byMode[m].map(tripWait))) };
+      if (!byMode.rad && km <= 15) out.rad_geschaetzt_min = Math.round(km / BIKE_KMH * 600) / 10;
+      if (!byMode.fuss && km <= 3) out.zu_fuss_geschaetzt_min = Math.round(km / WALK_KMH * 600) / 10;
+      const bh = bestHour(byMode.auto || g.trips);
+      if (bh.text) out.beste_abfahrt = { stunde: bh.best, warten_s: s(bh.bestAvg), sonst_s: s(bh.ref) };
+      return out;
+    });
+    const car = recent.filter((t) => t.mode === 'auto' && t.stats);
+    const steady = car.map((t) => t.stats.steadyShare).filter((x) => x != null);
+    const carKm = car.reduce((x, t) => x + t.distance, 0) / 1000;
+    const costs = recent.map(tripCosts).filter(Boolean);
+    const trs = recent.reduce((x, t) => x.concat(t.transfers || []), []);
+    return {
+      zeitraum: 'letzte 30 Tage', profil_barrierefrei: settings.access.on ? ACCESS_LABEL[settings.access.type] : null,
+      verkehrsmittel: groups, zeitfresser, wege,
+      fahrweise_auto: steady.length ? { gleichmaessig_anteil: Math.round(avgOf(steady) * 100) / 100, starke_bremsungen_je_100km: carKm ? Math.round(car.reduce((x, t) => x + (t.stats.brakes || 0), 0) / carKm * 1000) / 10 : null } : null,
+      kosten_ampelhalte_eur_geschaetzt: costs.length ? Math.round(costs.reduce((x, c) => x + c.halts, 0) * 100) / 100 : null,
+      umstiege: trs.length ? { anzahl: trs.length, warten_je_umstieg_s: s(avgOf(trs.map((r) => r.wait))), anschluss_verpasst: trs.filter((r) => r.missed).length } : null
+    };
+  }
+  async function runKi() {
+    kiState.busy = true; kiState.error = ''; renderTips();
+    try {
+      await loadWir();
+      const r = await postJson('/api/ki', { facts: kiFacts() });
+      kiState.result = Object.assign({ t: Date.now() }, r);
+      store.set('ki', kiState.result);
+    } catch (e) {
+      kiState.error = 'Die Einschätzung hat nicht geklappt: ' + e.message;
+    }
+    kiState.busy = false;
+    if (!$('#view-tips').hidden) renderTips();
   }
 
   function renderLastTrip() {
@@ -1673,6 +1819,24 @@
 
   // ---------- Ereignisse ----------
   $('#btn-start').addEventListener('click', startTrip);
+  $('#tips-body').addEventListener('click', (ev) => { if (ev.target.closest('#btn-ki')) runKi(); });
+  const saveServer = () => {
+    settings.server = { url: $('#inp-server').value.trim(), wir: $('#inp-wir').checked, ki: $('#inp-ki').checked };
+    store.set('settings', settings);
+    wirCache = null; wirAt = 0; newsAt = 0;
+    if (settings.server.wir) flushWir();
+  };
+  ['#inp-server', '#inp-wir', '#inp-ki'].forEach((id) => $(id).addEventListener('change', saveServer));
+  $('#btn-server-test').addEventListener('click', async () => {
+    saveServer();
+    const st = $('#server-status');
+    if (!apiBase()) { st.textContent = 'Bitte zuerst die Adresse eintragen.'; return; }
+    st.textContent = 'Verbindung wird geprüft …';
+    try {
+      const h = await api('/api/health');
+      st.textContent = `Verbunden. KI ${h.ki ? 'bereit (' + h.modell + ')' : 'auf dem Server noch nicht eingerichtet'}. Werte anderer ab ${h.kMin} Personen.`;
+    } catch (e) { st.textContent = 'Keine Verbindung: ' + e.message; }
+  });
   $('#today').addEventListener('click', (ev) => { const b = ev.target.closest('[data-goto]'); if (b) showView(b.dataset.goto); });
   $('#btn-transfer').addEventListener('click', startTransfer);
   $('#btn-next-bahn').addEventListener('click', () => endTransfer('bahn'));
@@ -1739,6 +1903,11 @@
   $('#inp-access').checked = !!settings.access.on;
   $('#inp-access-type').value = settings.access.type;
   $('#inp-access-type').hidden = !settings.access.on;
+  $('#inp-server').value = settings.server.url || '';
+  $('#inp-wir').checked = !!settings.server.wir;
+  $('#inp-ki').checked = !!settings.server.ki;
+  // Meldungen beim Start laden, damit sie auf „Heute“ erscheinen
+  loadNews().then(() => { if (newsCache.length && !$('#view-start').hidden) renderToday(); });
   $('#inp-cut').value = String(settings.cut);
   $('#inp-fuel').value = fmtNum(settings.fuelPrice, 2);
   $('#inp-power').value = fmtNum(settings.powerPrice, 2);
