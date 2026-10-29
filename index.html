@@ -56,6 +56,7 @@
   <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
   <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.6A3.5 3.5 0 0 0 7 18.5z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4"/></symbol>
 </svg>
@@ -69,8 +70,7 @@
   <p id="app-error" class="msg warn app-error" role="alert" hidden></p>
   <!-- Fahren -->
   <section id="view-start" class="view" aria-labelledby="h-start">
-    <h2 id="h-start">Heute unterwegs</h2>
-    <p class="lead"><strong class="claim">Die grüne Welle beginnt bei dir.</strong><br>Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn.</p>
+    <div class="hello"><p class="hello-date" id="today-date"></p><h2 id="h-start">Heute unterwegs</h2></div>
     <fieldset class="switch">
       <legend>Womit bist du unterwegs?</legend>
       <div class="switch-row">
@@ -96,14 +96,14 @@
     <button id="btn-start" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span id="btn-start-label">Fahrt starten</span></button>
     <p id="start-msg" class="msg" role="status" aria-live="polite"></p>
     <div id="today" class="today"></div>
-    <div class="card hints">
-      <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg></span><h3>So klappt die Aufzeichnung</h3></div>
+    <details class="card hints" id="hints">
+      <summary class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg></span><h3>So klappt die Aufzeichnung</h3></summary>
       <ul class="ilist">
         <li><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg><span id="hint-hold">Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.</span></li>
         <li><svg class="ic" aria-hidden="true"><use href="#i-hand"/></svg><span id="hint-during">Während der Fahrt nichts antippen. Bewertet wird erst danach.</span></li>
         <li><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg><span>Gespeichert werden nur Halte an Ampeln und Ampeln ohne Halt, nie Start und Ziel.</span></li>
       </ul>
-    </div>
+    </details>
     <div id="last-trip"></div>
   </section>
 
@@ -141,15 +141,16 @@
   <section id="view-review" class="view" hidden aria-labelledby="h-review">
     <h2 id="h-review">Wie war deine Fahrt?</h2>
     <div id="review-bilanz"></div>
-    <p id="review-summary" class="lead"></p>
+    <div id="review-summary" class="pills"></div>
     <div id="review-list" class="list"></div>
     <button id="btn-review-done" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Fertig</button>
+    <button id="btn-review-delete" class="btn quiet" type="button"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg><span>Diese Aufzeichnung löschen</span></button>
   </section>
 
   <!-- Tipps -->
   <section id="view-tips" class="view" hidden aria-labelledby="h-tips">
     <h2 id="h-tips">Deine Tipps</h2>
-    <p class="note"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><span>Ausgewertet auf deinem Gerät aus deinen eigenen Fahrten und Wegen. Das ist eine feste Auswertung, noch keine KI. Schätzungen sind als solche gekennzeichnet.</span></p>
+    <p class="note"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><span>Aus deinen Fahrten, auf deinem Gerät ausgewertet.</span></p>
     <div id="tips-body" class="today"></div>
   </section>
 
@@ -185,7 +186,7 @@
     <h2 id="h-more">Daten und Einstellungen</h2>
     <div class="card">
       <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-db"/></svg></span><h3>Deine Daten</h3></div>
-      <p class="small">Alle Daten bleiben auf diesem Gerät. Zum Auswerten kannst du sie als Datei exportieren und weitergeben.</p>
+      <p class="small muted">Alles bleibt auf diesem Gerät, bis du es exportierst.</p>
       <div class="btn-col">
         <button id="btn-export" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Daten exportieren (JSON)</button>
         <button id="btn-export-csv" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Halte exportieren (CSV)</button>
@@ -199,9 +200,12 @@
       </label>
       <p class="small muted" id="server-status" role="status" aria-live="polite"></p>
       <label class="check"><input type="checkbox" id="inp-wir"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg> Fahrten anonym beitragen</label>
-      <p class="small">Ebene „Wir“: Gesendet werden je Ampel nur Richtung, Zeitfenster und Wartezeit. Keine Uhrzeiten, keine Start- und Zielorte. Werte anderer siehst du erst, wenn mindestens fünf Personen an einer Ampel waren.</p>
       <label class="check"><input type="checkbox" id="inp-ki"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg> KI-Einschätzung erlauben</label>
-      <p class="small">Auf Knopfdruck gehen zusammengefasste Werte deiner Tipps über den Server an Mistral (EU): Wartezeiten, Straßennamen der Ampeln, Wegdauern, Kosten. Keine Koordinaten, keine Start- und Zielorte. Gespeichert wird dabei nichts.</p>
+      <details class="more-info"><summary><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Was wird gesendet?</summary>
+        <ul class="ilist small">
+          <li><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span><b>Beitragen:</b> je Ampel nur Richtung, Zeitfenster und Wartezeit. Keine Uhrzeiten, kein Start, kein Ziel. Werte anderer erscheinen ab fünf Personen.</span></li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span><b>KI:</b> auf Knopfdruck zusammengefasste Werte an Mistral (EU), etwa Wartezeiten und Ampelnamen. Keine Koordinaten, nichts wird gespeichert.</span></li>
+        </ul></details>
       <button id="btn-server-test" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Verbindung prüfen</button>
     </div>
     <div class="card">
@@ -222,7 +226,6 @@
           <option value="400">400 m</option>
         </select>
       </label>
-      <p class="small">So lässt sich aus den Daten nicht ablesen, wo du wohnst oder arbeitest.</p>
     </div>
     <div class="card">
       <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-light"/></svg></span><h3>Ampeldaten</h3></div>
@@ -231,7 +234,6 @@
     </div>
     <div class="card">
       <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-flask"/></svg></span><h3>Testen ohne Fahrt</h3></div>
-      <p class="small">Spielt eine simulierte Fahrt mit vier Demo-Ampeln ab. Die Demo-Daten sind markiert und lassen sich einzeln löschen.</p>
       <div class="btn-col">
         <button id="btn-demo" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg>Testfahrt simulieren</button>
         <button id="btn-demo-clear" class="btn" type="button">Demo-Daten löschen</button>

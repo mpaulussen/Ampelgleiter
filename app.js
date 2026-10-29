@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.15.0';
+  const VERSION = '0.16.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -859,12 +859,18 @@
     const atStop = trip.events.filter((e) => e.type === 'halt' && e.atStop).length;
     const other = trip.events.filter((e) => e.type === 'halt' && !e.signal && !e.atStop).length;
     const wait = halts.reduce((a, e) => a + e.wait, 0);
-    const extra = [atStop ? `${atStop} Halt${atStop === 1 ? '' : 'e'} an Haltestellen` : '', other ? `${other} Halt${other === 1 ? '' : 'e'} ohne Ampel in der Nähe` : ''].filter(Boolean).join(' und ');
     const trs = trip.transfers || [];
-    const trText = trs.length ? ` ${trs.length} Umstieg${trs.length === 1 ? '' : 'e'}, zusammen ${durText(trs.reduce((x, r) => x + r.wait, 0))}.` : '';
-    $('#review-summary').textContent = (halts.length
-      ? `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, zusammen ${fmtDur(wait)} Minuten gewartet. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt.${extra ? ` Dazu ${extra}, die nicht als Ampelhalt zählen.` : ''}`
-      : `Kein Halt an einer Ampel. ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt passiert.${extra ? ` ${extra.charAt(0).toUpperCase() + extra.slice(1)}.` : ''}`) + trText + (halts.length ? ' Wie war es an den Ampeln?' : '');
+    // Kennzahlen als kurze Marken statt Satz
+    const pill = (icon, text, cls) => `<span class="pill${cls ? ' ' + cls : ''}">${ic(icon)}${text}</span>`;
+    $('#review-summary').innerHTML = [
+      pill('light', `${halts.length} Halt${halts.length === 1 ? '' : 'e'}`, halts.length ? 'amber' : ''),
+      halts.length ? pill('hourglass', durText(wait), wait > 60000 ? 'red' : 'amber') : '',
+      pill('check', `${passes} ohne Halt`, 'green'),
+      atStop ? pill('pin', `${atStop} an Haltestellen`) : '',
+      trs.length ? pill('walk', `${trs.length} Umstieg${trs.length === 1 ? '' : 'e'} · ${durText(trs.reduce((x, r) => x + r.wait, 0))}`) : '',
+      other ? pill('info', `${other} ohne Ampel`) : ''
+    ].join('') + (halts.length ? '<p class="small muted ask">Wie war es an den Ampeln?</p>' : '');
+    $('#btn-review-delete').dataset.armed = ''; $('#btn-review-delete span').textContent = 'Diese Aufzeichnung löschen';
     renderBilanz();
     renderReview();
     showView('review');
@@ -895,7 +901,7 @@
     lines.push(c.stops
       ? `<p>Deine Ampelhalte: ca. ${fmtEuro(c.halts)} (${c.stops} Halt${c.stops === 1 ? '' : 'e'}, ${fmtNum(c.amount, 2)} ${c.unit === 'kWh' ? 'kWh' : 'l'})</p>`
       : '<p>Keine Ampelhalte, also auch keine Kosten fürs Warten.</p>');
-    lines.push(`<p class="small muted">Schätzung mit ${fmtEuro(c.price)} je ${c.unit === 'kWh' ? 'kWh' : 'Liter'} (änderbar unter „Mehr“), ${c.unit === 'kWh' ? `${fmtNum(IDLE_KWH_PER_H, 1)} kWh je Stunde im Stand und ${fmtNum(RESTART_KWH, 2)} kWh` : `${fmtNum(IDLE_L_PER_H, 1)} l je Stunde Leerlauf und ${fmtNum(RESTART_L, 2)} l`} je Wiederanfahren.</p>`);
+    lines.push(`<details class="more-info"><summary>${ic('info')}So wird geschätzt</summary><p class="small muted">${fmtEuro(c.price)} je ${c.unit === 'kWh' ? 'kWh' : 'Liter'} ${c.unit === 'kWh' ? `${fmtNum(IDLE_KWH_PER_H, 1)} kWh je Stunde im Stand und ${fmtNum(RESTART_KWH, 2)} kWh` : `${fmtNum(IDLE_L_PER_H, 1)} l je Stunde Leerlauf und ${fmtNum(RESTART_L, 2)} l`} je Wiederanfahren. Preise änderbar unter „Mehr“.</p></details>`);
     return lines.join('');
   }
   // Bus und Bahn: wohin die Zeit ging, und die Abschnitte der Fahrt
@@ -1016,6 +1022,13 @@
     if (again) again.focus();
   });
   $('#btn-review-done').addEventListener('click', () => { reviewTrip = null; showView('stats'); });
+  $('#btn-review-delete').addEventListener('click', () => {
+    const b = $('#btn-review-delete');
+    if (!reviewTrip) return;
+    if (!b.dataset.armed) { b.dataset.armed = '1'; $('#btn-review-delete span').textContent = 'Wirklich löschen? Nochmal tippen'; return; }
+    trips = trips.filter((t) => t.id !== reviewTrip.id); saveTrips();
+    reviewTrip = null; showView('stats');
+  });
 
   // ---------- Statistik ----------
   let statsRange = 'week';
@@ -1090,11 +1103,6 @@
       const rating = a.up || a.down ? `${a.up} / ${a.down}` : '–';
       return `<tr><td>${placeFor(a.sample)}</td><td>${dirShort(a.h)}</td><td>${n}</td><td>${fmtPct(a.halts / n)}</td><td>${a.halts ? fmtS(a.wait / a.halts) : '–'}</td><td>${rating}</td></tr>`;
     });
-    const tripList = list.slice().sort((a, b) => b.start - a.start).map((t) => {
-      const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-      return `<div class="trip"><span class="chip sm">${ic(MODE_ICON[t.mode] || 'route')}</span><span class="trip-main">${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? '<span class="badge">Demo</span>' : ''}<br><span class="muted">${(t.distance / 1000).toFixed(1).replace('.', ',')} km · ${h.length} Halte · ${fmtDur(h.reduce((x, e) => x + e.wait, 0))} min${(t.transfers || []).length ? ` · ${t.transfers.length} Umstieg${t.transfers.length === 1 ? '' : 'e'}` : ''}${t.stats && t.stats.steadyShare != null ? ` · ${fmtPct(t.stats.steadyShare)} gleichmäßig` : ''}${t.consumption ? ` · ${fmtNum(t.consumption.value, 1)} ${t.consumption.unit}/100 km` : ''}${(() => { const c = tripCosts(t); return c && c.energy != null ? ` · ${fmtEuro(c.energy)}` : ''; })()}</span></span>
-        <span class="trip-act"><button type="button" data-review="${t.id}">Ansehen</button><button type="button" data-del="${t.id}">Löschen</button></span></div>`;
-    });
     const thead = '<thead><tr><th>Ampel</th><th>Richtung</th><th>Fahrten</th><th>mit Halt</th><th>Ø Warten</th><th>gut / schlecht</th></tr></thead>';
     const table = (rs) => `<div class="tbl-wrap"><table>${thead}<tbody>${rs.join('')}</tbody></table></div>`;
     // lange Listen: die wichtigsten zuerst, der Rest zum Aufklappen
@@ -1111,9 +1119,9 @@
       <h3 class="sec">${ic('light')}Alle Ampeln</h3>
       ${table(rowList.slice(0, 8))}
       ${rest(rowList, 8, 'Alle Ampeln anzeigen', table)}
-      <h3 class="sec">${ic('list')}Fahrten und Wege</h3>
-      <div class="list">${tripList.slice(0, 5).join('')}</div>
-      ${rest(tripList, 5, 'Ältere anzeigen', (xs) => `<div class="list">${xs.join('')}</div>`)}`;
+      <h3 class="sec">${ic('calendar')}Fahrten und Wege</h3>
+      <div class="card timeline">${tripTimeline(list, 8)}</div>
+      ${list.length > 8 ? `<details class="more-box"><summary>${ic('list')}Ältere anzeigen (${list.length - 8} weitere)</summary><div class="card timeline">${tripTimeline(list.slice().sort((x, y) => y.start - x.start).slice(8))}</div></details>` : ''}`;
     requestNames(ag.per.map((a) => a.sample), () => { if (!$('#view-stats').hidden) renderStats(); });
   }
   $('.seg').addEventListener('click', (ev) => {
@@ -1522,7 +1530,7 @@
     const since = Date.now() - 30 * 864e5;
     const ts = trips.filter((t) => !t.demo && MODE_GROUP[t.mode] === group && t.start >= since);
     const head = cardHead(MODE_ICON[group], cap(GROUP_WITH[group]), 'Die letzten 30 Tage');
-    const later = group === 'oepnv' ? `<p class="note">${ic('bell')}<span>Abfahrten und Verspätungen von moBiel zeigt Flowtown, sobald eine Datenquelle angebunden ist.</span></p>` : '';
+    const later = '';
     const w = words(group);
     if (!ts.length) return `<div class="card">${head}<p class="note">${ic('info')}<span>${w.none}. Starte unten deine erste Aufzeichnung.</span></p>${later}</div>`;
     const km = ts.reduce((a, t) => a + t.distance, 0) / 1000;
@@ -1533,7 +1541,7 @@
       const atStops = ts.reduce((a, t) => a + t.events.reduce((b, e) => b + (e.atStop ? e.wait : 0), 0), 0);
       const trs = ts.reduce((a, t) => a.concat(t.transfers || []), []);
       const missed = trs.filter((r) => r.missed).length;
-      extra = `${atStops || trs.length ? `<ul class="facts"><li>${ic('pin')}<span>An Haltestellen</span><b>${durText(atStops)}</b></li><li>${ic('light')}<span>An Ampeln</span><b>${durText(wait)}</b></li>${trs.length ? `<li>${ic('walk')}<span>Ø je Umstieg (${trs.length}×)</span><b>${durText(avgOf(trs.map((r) => r.wait)))}</b></li>` : ''}${missed ? `<li>${ic('alert')}<span>Anschluss verpasst</span><b>${missed}×</b></li>` : ''}</ul>` : ''}<p class="note">${ic('info')}<span>Die Zeit an Ampeln ist Verlustzeit, die ein besserer Vorrang für Bus und Bahn sparen könnte.</span></p>`;
+      extra = `${atStops || trs.length ? `<ul class="facts"><li>${ic('pin')}<span>An Haltestellen</span><b>${durText(atStops)}</b></li><li>${ic('light')}<span>An Ampeln</span><b>${durText(wait)}</b></li>${trs.length ? `<li>${ic('walk')}<span>Ø je Umstieg (${trs.length}×)</span><b>${durText(avgOf(trs.map((r) => r.wait)))}</b></li>` : ''}${missed ? `<li>${ic('alert')}<span>Anschluss verpasst</span><b>${missed}×</b></li>` : ''}</ul>` : ''}`;
     }
     const mini = (icon, val, label) => `<div class="mini">${ic(icon)}<b>${val}</b><span>${label}</span></div>`;
     return `<div class="card">${head}<div class="minis">${mini('list', ts.length, ts.length === 1 ? w.one : w.many)}${mini('route', fmtNum(km, 1) + ' km', 'Strecke')}${mini('light', fmtNum(km ? halts / km : 0, 1), 'Ampelhalte je km')}${mini('hourglass', durText(wait / ts.length), 'Ø an Ampeln je ' + w.one)}</div>${extra}${later}</div>`;
@@ -1544,9 +1552,8 @@
     let yes = 0, no = 0, unk = 0;
     for (const id of ids) { const c = clusterById[id]; if (c && c.sound === 'yes') yes++; else if (c && c.sound === 'no') no++; else unk++; }
     return `<div class="card">${cardHead('access', 'Barrierefrei unterwegs', esc(ACCESS_LABEL[settings.access.type]))}
-      ${ids.size ? `<p class="small muted">Ampeln auf deinen Wegen laut OpenStreetMap</p><ul class="facts"><li>${ic('sound')}<span>mit Tonsignal</span><b>${yes}</b></li><li>${ic('light')}<span>ohne Tonsignal</span><b>${no}</b></li><li>${ic('info')}<span>ohne Angabe</span><b>${unk}</b></li></ul>` : `<p class="note">${ic('sound')}<span>Nach den ersten Fahrten siehst du hier, welche Ampeln auf deinen Wegen ein Tonsignal haben.</span></p>`}
-      <p class="note">${ic('thumb')}<span>Bei der Bewertung gibt es zusätzliche Stichworte wie „Grün zu kurz zum Queren“.</span></p>
-      <p class="note">${ic('shield')}<span>Deine Aufzeichnungen tragen den Hinweis „${esc(ACCESS_LABEL[settings.access.type])}“, damit sich Wartezeiten mit Einschränkung getrennt auswerten lassen. Das bleibt auf deinem Gerät.</span></p></div>`;
+      ${ids.size ? `<ul class="facts"><li>${ic('sound')}<span>Ampeln mit Tonsignal</span><b>${yes}</b></li><li>${ic('light')}<span>ohne Tonsignal</span><b>${no}</b></li><li>${ic('info')}<span>ohne Angabe</span><b>${unk}</b></li></ul>` : `<p class="small muted">Nach den ersten Fahrten: Ampeln mit Tonsignal auf deinen Wegen.</p>`}
+      </div>`;
   }
   function renderToday() {
     const group = MODE_GROUP[selectedMode()];
@@ -1557,9 +1564,9 @@
     if (routes.some(own)) routes = routes.filter(own);   // Wege mit anderen Verkehrsmitteln nur, solange es keine eigenen gibt
     const html = routes.length
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
-      : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small">Wenn du dieselbe Strecke zwei-, dreimal zurückgelegt hast, erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>`];
+      : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small muted">Ab zwei Fahrten auf derselben Strecke zeigt Flowtown hier deinen Weg und die beste Abfahrtszeit.</p></div>`];
     const top = computeTips()[0];
-    if (top) html.unshift(`<div class="card top-tip">${cardHead('bulb', 'Dein Tipp', '', 'amber')}<p>${top.short}</p><button type="button" class="btn" data-goto="tips">${ic('bulb')}Alle Tipps</button></div>`);
+    if (top) html.unshift(`<button type="button" class="card top-tip" data-goto="tips"><span class="chip amber">${ic('bulb')}</span><span class="tt-text"><span class="meta">Dein Tipp</span>${top.short}</span>${ic('chevron', 'tt-go')}</button>`);
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
     $('#today').innerHTML = html.join('');
@@ -1646,7 +1653,7 @@
     return { prio: 0, icon: 'alert', cls: 'amber', title: 'Auffällig auf deinen Wegen',
       short: `${esc(labelFor(first.e))}: ${durText(first.e.wait)} gewartet, sonst Ø ${durText(first.usual)}.`,
       html: `<ul class="facts">${out.slice(0, 3).map((x) => `<li>${ic('light')}<span>${dayLabel(x.e.t)} · ${placeFor(x.e)}</span><b>${durText(x.e.wait)}</b></li>`).join('')}</ul>
-        <p class="note">${ic('info')}<span>Sonst wartest du dort Ø ${out.slice(0, 3).map((x) => durText(x.usual)).join(' bzw. ')}. Vielleicht Baustelle, Sperrung oder Stau.</span></p>` };
+        <p class="small muted">Sonst Ø ${out.slice(0, 3).map((x) => durText(x.usual)).join(' bzw. ')}. Baustelle, Sperrung oder Stau?</p>` };
   }
   function anomalyList(list) {
     const since = Date.now() - 7 * 864e5;
@@ -1698,8 +1705,7 @@
         prio = 1;
       }
       return { prio, icon: 'route', title: routeName(g), meta: `Dein Weg · ${g.trips.length}× unterwegs`, short: short || `${g.trips.length}× unterwegs auf diesem Weg.`,
-        html: `${bh.text ? `<p class="tip">${ic('bulb')}<span>${bh.text}</span></p>` : ''}${prio === 1 ? `<p class="tip">${ic('bike')}<span>${short}</span></p>` : ''}<div class="alt">${rows.join('')}</div>
-          <p class="note">${ic('bell')}<span>Fahrpläne von Bus und Bahn als Alternative kommen mit dem Flowtown-Server.</span></p>` };
+        html: `${bh.text ? `<p class="tip">${ic('bulb')}<span>${bh.text}</span></p>` : ''}${prio === 1 ? `<p class="tip">${ic('bike')}<span>${short}</span></p>` : ''}<div class="alt">${rows.join('')}</div>` };
     });
   }
   function tipTimeEaters(list) {
@@ -1710,7 +1716,7 @@
     const what = top.length === 1 ? 'eine Ampel' : `${top.length} Ampeln`;
     return { prio: 2, icon: 'hourglass', cls: 'bad', title: 'Deine größten Zeitfresser',
       short: `${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}.`,
-      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => { const o = othersAt(x.signal, x.h); return `<li>${ic('light')}<span>${placeFor(x.sample)}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}${o ? `<span class="others">Andere (${o.n}): ${fmtPct(o.share)} mit Halt, Ø ${durText(o.avg)}</span>` : ''}</span><b>${durText(x.wait)}</b></li>`; }).join('')}</ul>` };
+      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => { const o = othersAt(x.signal, x.h); return `<li>${ic('light')}<span>${placeFor(x.sample)}${x.h != null ? `<span class="others">Richtung ${esc(dirShort(x.h))}</span>` : ''}${o ? `<span class="others">Andere (${o.n}): ${fmtPct(o.share)} mit Halt, Ø ${durText(o.avg)}</span>` : ''}</span><b>${durText(x.wait)}</b></li>`; }).join('')}</ul>` };
   }
   // Autofahrten: Wartezeit an Ampeln je km nach Zeitfenster
   // Autofahrten: Wartezeit an Ampeln je km je Zeitfenster
@@ -1744,7 +1750,7 @@
     return { prio: 4, icon: 'wave', title: 'Gleichmäßiger fahren', meta: 'Die letzten 30 Tage',
       short: `Du fährst zu Ø ${fmtPct(share)} gleichmäßig.`,
       html: `<ul class="facts"><li>${ic('wave')}<span>gleichmäßig gefahren</span><b>${fmtPct(share)}</b></li><li>${ic('alert')}<span>starke Bremsungen je 100 km</span><b>${fmtNum(brakes, 1)}</b></li></ul>
-        <p class="note">${ic('bulb')}<span>Früh vom Gas gehen und auf eine rote Ampel zurollen: Oft wird es grün, bevor du ganz anhalten musst. Das spart Sprit und Bremsen.</span></p>` };
+        <p class="small muted">Tipp: früh vom Gas und auf Rot zurollen, oft wird es vorher grün.</p>` };
   }
   function tipCosts(list) {
     const since = Date.now() - 30 * 864e5;
@@ -1754,7 +1760,7 @@
     if (halts < 0.05) return null;
     return { prio: 5, icon: 'euro', cls: 'amber', title: 'Was dich Ampeln kosten', meta: 'Die letzten 30 Tage, geschätzt',
       short: `Ampelhalte kosteten dich etwa ${fmtEuro(halts)}.`,
-      html: `<p>Leerlauf und Wiederanfahren an Ampeln kosteten dich bei ${cs.length} Autofahrt${cs.length === 1 ? '' : 'en'} etwa <strong>${fmtEuro(halts)}</strong>.</p>` };
+      html: `<div class="big-line">${ic('euro')}<span><b>${fmtEuro(halts)}</b> für Leerlauf und Anfahren bei ${cs.length} Autofahrt${cs.length === 1 ? '' : 'en'}</span></div>` };
   }
   function tipNews() {
     const ns = myNews();
@@ -1769,7 +1775,7 @@
   }
   function renderTips() {
     const tips = computeTips();
-    const news = myNews().length ? '' : `<div class="card">${cardHead('bell', 'Meldungen', 'Sperrungen, Baustellen, Ausfälle')}<p class="small">${apiBase() ? 'Gerade keine Meldungen für deine Wege.' : 'Meldungen der Stadt und von moBiel zu deinen Wegen erscheinen hier, sobald der Flowtown-Server unter „Mehr“ eingetragen ist.'} Angezeigt wird nur, was deine Wege betrifft.</p></div>`;
+    const news = '';   // Meldungen erscheinen nur, wenn es welche für die eigenen Wege gibt
     $('#tips-body').innerHTML = kiCard() + (tips.length
       ? tips.map((x) => `<div class="card">${cardHead(x.icon, x.title, x.meta || '', x.cls)}${x.html}</div>`).join('')
       : `<div class="card">${cardHead('bulb', 'Noch zu wenig Daten')}<p class="small">Nach ein paar Fahrten auf deinen üblichen Wegen findest du hier deine Zeitfresser, die besten Abfahrtszeiten und Alternativen mit Rad oder zu Fuß.</p></div>`) + news;
@@ -1802,11 +1808,11 @@
   }
   function kiCard() {
     if (!apiBase()) return '';
-    if (!settings.server.ki) return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}<p class="small">Erlaube die KI-Einschätzung unter „Mehr“, dann formuliert eine KI aus deinen Werten persönliche Empfehlungen.</p></div>`;
+    if (!settings.server.ki) return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}<p class="small muted">Unter „Mehr“ erlauben, dann gibt es persönliche Empfehlungen.</p></div>`;
     const r = kiState.result;
     const L2 = kiLinker();
     const body = r ? `<p>${L2(r.einschaetzung)}</p>${r.groesster_hebel ? `<p class="tip">${ic('spark')}<span><strong>Größter Hebel:</strong> ${L2(r.groesster_hebel)}</span></p>` : ''}<ul class="ki-list">${r.empfehlungen.map((e) => `<li>${ic('bulb')}<span><strong>${L2(e.titel)}</strong><br>${L2(e.text)}</span></li>`).join('')}</ul>
-      <p class="note">${ic('info')}<span>KI-Text von ${esc(r.modell || 'Mistral')}, erstellt am ${esc(dayLabel(r.t))} Er kann Fehler enthalten.</span></p>` : '<p class="small">Eine KI formuliert aus deinen zusammengefassten Werten eine Einschätzung und Empfehlungen.</p>';
+      <p class="small muted">${esc(r.modell || 'Mistral')} · ${esc(dayLabel(r.t))} · KI kann sich irren</p>` : '<p class="small muted">Persönliche Einschätzung aus deinen Werten.</p>';
     return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}${body}${kiState.error ? `<p class="msg warn">${esc(kiState.error)}</p>` : ''}
       <button type="button" class="btn${r ? '' : ' primary'}" id="btn-ki" ${kiState.busy ? 'disabled' : ''}>${ic('spark')}${kiState.busy ? 'Einschätzung wird erstellt …' : r ? 'Neu einschätzen' : 'Einschätzung holen'}</button></div>`;
   }
@@ -1898,12 +1904,40 @@
     if (!$('#view-tips').hidden) renderTips();
   }
 
-  function renderLastTrip() {
-    const t = trips.filter((x) => !x.demo).slice(-1)[0];
-    const el = $('#last-trip');
-    if (!t) { el.innerHTML = ''; return; }
+  // ---------- Zeitleiste: Fahrten nach Tagen und Uhrzeiten ----------
+  const dayStart = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  function dayTitle(ts) {
+    const diff = Math.round((dayStart(Date.now()) - ts) / 864e5);
+    const label = new Date(ts).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+    return diff === 0 ? `Heute · ${label}` : diff === 1 ? `Gestern · ${label}` : label;
+  }
+  function tripRow(t) {
     const h = t.events.filter((e) => e.type === 'halt' && e.signal);
-    el.innerHTML = `<div class="card">${cardHead(MODE_ICON[t.mode] || 'route', words(t.mode).last, `${fmtDate(t.start)} · ${MODES[t.mode] ? MODES[t.mode].label : ''}`)}<ul class="facts"><li>${ic('light')}<span>Halte an Ampeln</span><b>${h.length}</b></li><li>${ic('hourglass')}<span>gewartet</span><b>${durText(h.reduce((a, e) => a + e.wait, 0))}</b></li></ul></div>`;
+    const wait = h.reduce((x, e) => x + e.wait, 0);
+    const time = new Date(t.start).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    const trs = (t.transfers || []).length;
+    return `<li><button type="button" class="trow" data-review="${t.id}">
+      <span class="t-time">${time}</span>
+      <span class="chip sm">${ic(MODE_ICON[t.mode] || 'route')}</span>
+      <span class="t-main"><b>${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? ' <span class="badge">Demo</span>' : ''}</b><span class="t-sub"><span>${Math.max(1, Math.round(((t.end || t.start) - t.start) / 60000))} min</span> · <span>${fmtNum(t.distance / 1000, 1)} km</span>${trs ? ` · <span>${trs} Umstieg${trs === 1 ? '' : 'e'}</span>` : ''}</span></span>
+      <span class="t-pills"><span class="pill${h.length ? ' amber' : ' green'}" title="Halte an Ampeln">${ic('light')}${h.length}</span>${h.length ? `<span class="pill ${wait > 60000 ? 'red' : 'amber'}" title="gewartet">${ic('hourglass')}${fmtDur(wait)}</span>` : ''}</span>
+      ${ic('chevron', 't-go')}
+    </button></li>`;
+  }
+  function tripTimeline(list, maxRows) {
+    const sorted = list.slice().sort((x, y) => y.start - x.start).slice(0, maxRows || 1e9);
+    const days = [];
+    for (const t of sorted) { const k = dayStart(t.start); const d = days[days.length - 1]; if (d && d.k === k) d.trips.push(t); else days.push({ k, trips: [t] }); }
+    return days.map((d) => `<div class="day"><h4 class="day-title">${dayTitle(d.k)}</h4><ul class="tlist">${d.trips.map(tripRow).join('')}</ul></div>`).join('');
+  }
+
+  function renderLastTrip() {
+    const el = $('#last-trip');
+    const recent = trips.filter((x) => !x.demo);
+    $('#today-date').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+    $('#hints').open = !recent.length;   // Hinweise nur offen, solange es noch keine Fahrt gibt
+    if (!recent.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="card">${cardHead('calendar', 'Letzte Fahrten')}${tripTimeline(recent, 4)}<button type="button" class="btn quiet" data-goto="stats">${ic('list')}Alle Fahrten</button></div>`;
   }
 
   // ---------- Ereignisse ----------
@@ -1927,6 +1961,10 @@
     } catch (e) { st.textContent = 'Keine Verbindung: ' + e.message; }
   });
   $('#today').addEventListener('click', (ev) => { const b = ev.target.closest('[data-goto]'); if (b) showView(b.dataset.goto); });
+  $('#last-trip').addEventListener('click', (ev) => {
+    const g = ev.target.closest('[data-goto]'); if (g) { showView(g.dataset.goto); return; }
+    const b = ev.target.closest('[data-review]'); const t = b && trips.find((x) => x.id === b.dataset.review); if (t) openReview(t);
+  });
   $('#btn-transfer').addEventListener('click', startTransfer);
   $('#btn-next-bahn').addEventListener('click', () => endTransfer('bahn'));
   $('#btn-next-bus').addEventListener('click', () => endTransfer('bus'));

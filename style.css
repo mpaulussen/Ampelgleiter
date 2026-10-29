@@ -212,7 +212,7 @@ details.tag-box .tags{margin-top:4px}
 .ki-list li{display:flex;gap:10px;align-items:flex-start}
 .ki-list .ic{color:var(--accent);margin-top:3px}
 .others{display:block;font-size:13px;color:var(--muted)}
-button.place{font:inherit;color:var(--accent);background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;-webkit-tap-highlight-color:transparent}
+button.place{display:inline;font:inherit;color:var(--accent);background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;-webkit-tap-highlight-color:transparent}
 button.place:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:4px}
 .route-name button.place,.card-head h3 button.place{font-weight:inherit;color:inherit}
 dialog.peek{width:min(94vw,560px);max-width:none;padding:0;border:0;border-radius:18px;background:var(--surface);color:var(--fg);box-shadow:0 10px 40px rgba(0,0,0,.35)}
@@ -223,3 +223,45 @@ dialog.peek::backdrop{background:rgba(10,16,22,.55)}
 .peek-close{min-height:44px;min-width:44px;padding:8px}
 #peek-map{height:min(55vh,420px);margin:0 12px;border-radius:12px;border:1px solid var(--line)}
 #peek-meta{padding:8px 16px 14px}
+
+/* ---------- 0.16: übersichtlicher ---------- */
+.hello{display:flex;flex-direction:column;gap:2px}
+.hello-date{font-size:14px;font-weight:600;color:var(--muted);margin:0}
+.pills{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:14px;font-weight:700;padding:5px 10px;border-radius:999px;background:var(--bg);color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pill .ic{width:16px;height:16px}
+.pill.green{background:var(--tint);color:var(--accent)}
+.pill.amber{background:var(--amber-tint);color:var(--amber-ink)}
+.pill.red{background:var(--bad-tint);color:var(--bad)}
+.pills .ask{flex-basis:100%;margin-top:4px}
+.btn.quiet{background:transparent;border-color:transparent;color:var(--accent);min-height:44px;align-self:flex-start;padding-inline:4px}
+.btn.quiet:active{background:var(--bg)}
+#btn-review-delete{color:var(--bad);align-self:center}
+.day{display:flex;flex-direction:column;gap:6px}
+.day + .day{margin-top:6px}
+.day-title{margin:0;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.tlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.tlist li + li{border-top:1px solid var(--line)}
+.trow{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:10px;padding:10px 2px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.trow:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:8px}
+.t-time{width:44px;flex:none;font-weight:700;font-variant-numeric:tabular-nums}
+.t-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.t-main b{font-size:15px}
+.t-sub{font-size:13px;color:var(--muted)}
+.t-pills{display:flex;gap:4px;flex:none}
+.t-pills .pill{padding:4px 8px;font-size:13px}
+.t-go,.tt-go{width:18px;height:18px;color:var(--muted);flex:none}
+.timeline{padding-block:12px}
+.top-tip{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:12px;background:var(--amber-tint);border-radius:16px;padding:12px 14px;cursor:pointer;font-weight:600}
+.top-tip:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.tt-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.tt-text .meta{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--amber-ink)}
+details.hints summary.card-head{list-style:none;cursor:pointer}
+details.hints summary.card-head::-webkit-details-marker{display:none}
+details.hints summary.card-head::after{margin-left:auto}
+details.hints:not([open]){padding-block:12px}
+details.hints[open] .ilist{margin-top:4px}
+.more-info summary{min-height:36px;font-size:14px;color:var(--accent)}
+.more-info[open] summary{margin-bottom:6px}
+details.hints summary.card-head{color:inherit;min-height:0}
+.t-sub span{white-space:nowrap}
