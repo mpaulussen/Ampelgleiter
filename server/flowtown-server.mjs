@@ -69,12 +69,36 @@ function readWir(ids) {
 }
 
 // ---------- KI-Einschätzung (Mistral) ----------
-const SYSTEM = `Du bist der Mobilitäts-Coach der App Flowtown aus Bielefeld. Du bekommst zusammengefasste Werte aus den Fahrten und Wegen einer Person:
-Wartezeiten an Ampeln, Wege, Abfahrtszeiten, Verkehrsmittel, Kosten und eventuell ein Profil zur Barrierefreiheit.
-Gib eine kurze Einschätzung und höchstens fünf konkrete Empfehlungen, die zu genau diesen Werten passen.
-Regeln: Schreibe Deutsch, duze, kurze Sätze. Erfinde keine Zahlen, nutze nur die gelieferten. Werte mit "geschaetzt" nennst du Schätzung.
-Empfiehl andere Verkehrsmittel nur, wenn die Werte dafür sprechen. Keine Bedienung des Handys während der Fahrt empfehlen.
-Antworte nur mit JSON: {"einschaetzung": "2 bis 3 Sätze", "empfehlungen": [{"titel": "kurz", "text": "1 bis 2 Sätze"}]}`;
+const SYSTEM = `Du bist der Mobilitäts-Coach der App Flowtown aus Bielefeld. Du bekommst die zusammengefassten Werte
+einer Person aus den letzten 30 Tagen (JSON) und unter "app_hinweise" die Hinweise, die die App selbst schon erkannt hat.
+Baue auf diesen Hinweisen auf, statt sie nur zu wiederholen.
+
+Deine Aufgabe: Finde die zwei oder drei Stellen, an denen diese Person am meisten Zeit, Geld oder Nerven verliert,
+und sag ihr, was sie dort konkret anders machen kann.
+
+Jede Empfehlung muss:
+- einen Ort, einen Weg oder eine Uhrzeit aus den Daten beim Namen nennen,
+- mindestens eine Zahl aus den Daten enthalten,
+- sagen, was die Person konkret tun kann, und wenn die Daten es hergeben, was das in Minuten pro Woche bringt
+  (zum Beispiel Ersparnis je Fahrt mal "fahrten_pro_woche").
+
+Verboten sind allgemeine Ratschläge, die auf jeden passen würden, etwa "vorausschauend fahren", "mehr Rad fahren"
+oder "Stoßzeiten meiden", wenn du sie nicht mit einem Ort und einer Zahl aus den Daten begründest.
+
+Wenn Werte anderer Personen ("andere") vorliegen, vergleiche: Wartet die Person an einer Ampel länger als andere,
+liegt es eher an ihrer Uhrzeit oder Richtung. Wartet sie ähnlich lange, liegt es an der Ampel; dann empfiehl,
+die Ampel in Flowtown schlecht zu bewerten, damit die Stadt davon erfährt.
+Ist ein Profil zur Barrierefreiheit gesetzt, achte besonders auf Wege zu Fuß, Umstiege und Grünzeiten.
+Andere Verkehrsmittel empfiehlst du nur, wenn die Werte dafür sprechen. Felder mit "geschaetzt" nennst du Schätzung.
+Erfinde keine Zahlen und keine Orte. Wenn die Daten für eine Empfehlung nicht reichen, sag das und nenne,
+welche Fahrten noch fehlen.
+
+Schreibe Deutsch, duze, kurze Sätze, freundlich und direkt. Empfiehl nichts, wofür man das Handy während der Fahrt braucht.
+
+Antworte nur mit JSON:
+{"einschaetzung": "2 bis 3 Sätze mit dem wichtigsten Befund und einer Zahl",
+ "groesster_hebel": "1 Satz: die eine Änderung, die am meisten bringt",
+ "empfehlungen": [{"titel": "kurz, mit Ort oder Uhrzeit", "text": "1 bis 2 Sätze mit Zahl und konkreter Handlung"}]}`;
 
 const kiCount = new Map();   // IP → { day, n }
 function kiAllowed(ip) {
@@ -94,7 +118,7 @@ async function askMistral(facts) {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${MISTRAL_KEY}` },
       body: JSON.stringify({
-        model: MISTRAL_MODEL, temperature: 0.3, max_tokens: 700,
+        model: MISTRAL_MODEL, temperature: 0.3, max_tokens: 1000,
         response_format: { type: 'json_object' },
         messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: JSON.stringify(facts) }]
       })
@@ -106,6 +130,7 @@ async function askMistral(facts) {
     const clean = (s, n) => String(s || '').slice(0, n);
     return {
       einschaetzung: clean(parsed.einschaetzung, 800),
+      groesster_hebel: clean(parsed.groesster_hebel, 300),
       empfehlungen: (Array.isArray(parsed.empfehlungen) ? parsed.empfehlungen : []).slice(0, 5).map((e) => ({ titel: clean(e.titel, 80), text: clean(e.text, 400) })),
       modell: MISTRAL_MODEL
     };
@@ -150,7 +175,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/ki') {
       if (!kiAllowed(ip)) return send(res, 429, { fehler: 'Heute sind keine weiteren KI-Einschätzungen möglich.' }, origin);
-      const body = await readBody(req, 24 * 1024);
+      const body = await readBody(req, 48 * 1024);
       return send(res, 200, await askMistral(body.facts || {}), origin);
     }
     if (req.method === 'GET' && p === '/api/news') return send(res, 200, { meldungen: readNews() }, origin);

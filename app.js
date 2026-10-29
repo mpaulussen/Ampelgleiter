@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.14.0';
+  const VERSION = '0.14.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1607,6 +1607,15 @@
 
   // Ungewöhnlich lange Wartezeit an einer Ampel in den letzten 7 Tagen, verglichen mit den übrigen Besuchen
   function tipAnomalies(list) {
+    const out = anomalyList(list);
+    if (!out.length) return null;
+    const first = out[0];
+    return { prio: 0, icon: 'alert', cls: 'amber', title: 'Auffällig auf deinen Wegen',
+      short: `${esc(labelFor(first.e))}: ${durText(first.e.wait)} gewartet, sonst Ø ${durText(first.usual)}.`,
+      html: `<ul class="facts">${out.slice(0, 3).map((x) => `<li>${ic('light')}<span>${dayLabel(x.e.t)} · ${esc(labelFor(x.e))}</span><b>${durText(x.e.wait)}</b></li>`).join('')}</ul>
+        <p class="note">${ic('info')}<span>Sonst wartest du dort Ø ${out.slice(0, 3).map((x) => durText(x.usual)).join(' bzw. ')}. Vielleicht Baustelle, Sperrung oder Stau.</span></p>` };
+  }
+  function anomalyList(list) {
     const since = Date.now() - 7 * 864e5;
     const visits = {};
     for (const t of list) for (const e of t.events) if (e.signal) (visits[e.signal] = visits[e.signal] || []).push({ e, trip: t.id });
@@ -1622,13 +1631,7 @@
         if (e.wait >= 2 * usual + 30000) out.push({ e, usual });
       }
     }
-    if (!out.length) return null;
-    out.sort((x, y) => y.e.t - x.e.t);
-    const first = out[0];
-    return { prio: 0, icon: 'alert', cls: 'amber', title: 'Auffällig auf deinen Wegen',
-      short: `${esc(labelFor(first.e))}: ${durText(first.e.wait)} gewartet, sonst Ø ${durText(first.usual)}.`,
-      html: `<ul class="facts">${out.slice(0, 3).map((x) => `<li>${ic('light')}<span>${dayLabel(x.e.t)} · ${esc(labelFor(x.e))}</span><b>${durText(x.e.wait)}</b></li>`).join('')}</ul>
-        <p class="note">${ic('info')}<span>Sonst wartest du dort Ø ${out.slice(0, 3).map((x) => durText(x.usual)).join(' bzw. ')}. Vielleicht Baustelle, Sperrung oder Stau.</span></p>` };
+    return out.sort((x, y) => y.e.t - x.e.t);
   }
   // Wege: beste Abfahrtszeit und andere Verkehrsmittel im Vergleich
   function tipRoutes(list) {
@@ -1677,14 +1680,18 @@
       html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => { const o = othersAt(x.signal, x.h); return `<li>${ic('light')}<span>${esc(labelFor(x.sample))}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}${o ? `<span class="others">Andere (${o.n}): ${fmtPct(o.share)} mit Halt, Ø ${durText(o.avg)}</span>` : ''}</span><b>${durText(x.wait)}</b></li>`; }).join('')}</ul>` };
   }
   // Autofahrten: Wartezeit an Ampeln je km nach Zeitfenster
-  function tipWindows(list) {
+  // Autofahrten: Wartezeit an Ampeln je km je Zeitfenster
+  function windowStats(list, minTrips) {
     const per = {};
     for (const t of list) {
       if (t.mode !== 'auto' || t.distance < 1000) continue;
       const w = timeWindow(t.start);
       (per[w] = per[w] || []).push(tripWait(t) / (t.distance / 1000));
     }
-    const ws = WINDOWS.filter((w) => per[w.id] && per[w.id].length >= 2).map((w) => ({ w, v: avgOf(per[w.id]), n: per[w.id].length }));
+    return WINDOWS.filter((w) => per[w.id] && per[w.id].length >= minTrips).map((w) => ({ w, v: avgOf(per[w.id]), n: per[w.id].length }));
+  }
+  function tipWindows(list) {
+    const ws = windowStats(list, 2);
     if (ws.length < 2) return null;
     ws.sort((x, y) => x.v - y.v);
     const best = ws[0], worst = ws[ws.length - 1];
@@ -1747,7 +1754,7 @@
     if (!apiBase()) return '';
     if (!settings.server.ki) return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}<p class="small">Erlaube die KI-Einschätzung unter „Mehr“, dann formuliert eine KI aus deinen Werten persönliche Empfehlungen.</p></div>`;
     const r = kiState.result;
-    const body = r ? `<p>${esc(r.einschaetzung)}</p><ul class="ki-list">${r.empfehlungen.map((e) => `<li>${ic('bulb')}<span><strong>${esc(e.titel)}</strong><br>${esc(e.text)}</span></li>`).join('')}</ul>
+    const body = r ? `<p>${esc(r.einschaetzung)}</p>${r.groesster_hebel ? `<p class="tip">${ic('spark')}<span><strong>Größter Hebel:</strong> ${esc(r.groesster_hebel)}</span></p>` : ''}<ul class="ki-list">${r.empfehlungen.map((e) => `<li>${ic('bulb')}<span><strong>${esc(e.titel)}</strong><br>${esc(e.text)}</span></li>`).join('')}</ul>
       <p class="note">${ic('info')}<span>KI-Text von ${esc(r.modell || 'Mistral')}, erstellt am ${esc(dayLabel(r.t))} Er kann Fehler enthalten.</span></p>` : '<p class="small">Eine KI formuliert aus deinen zusammengefassten Werten eine Einschätzung und Empfehlungen.</p>';
     return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}${body}${kiState.error ? `<p class="msg warn">${esc(kiState.error)}</p>` : ''}
       <button type="button" class="btn${r ? '' : ' primary'}" id="btn-ki" ${kiState.busy ? 'disabled' : ''}>${ic('spark')}${kiState.busy ? 'Einschätzung wird erstellt …' : r ? 'Neu einschätzen' : 'Einschätzung holen'}</button></div>`;
@@ -1780,8 +1787,15 @@
       if (!byMode.fuss && km <= 3) out.zu_fuss_geschaetzt_min = Math.round(km / WALK_KMH * 600) / 10;
       const bh = bestHour(byMode.auto || g.trips);
       if (bh.text) out.beste_abfahrt = { stunde: bh.best, warten_s: s(bh.bestAvg), sonst_s: s(bh.ref) };
+      // wie oft und wann: Abfahrten je Stunde mit Ø Wartezeit an Ampeln
+      const inMonth = g.trips.filter((t) => t.start >= since).length;
+      out.fahrten_pro_woche = Math.round(inMonth / (30 / 7) * 10) / 10;
+      const hours = {};
+      for (const t of g.trips) { const h = new Date(t.start).getHours(); (hours[h] = hours[h] || []).push(tripWait(t)); }
+      out.abfahrten = Object.keys(hours).map(Number).sort((x, y) => x - y).map((h) => ({ stunde: h, fahrten: hours[h].length, warten_an_ampeln_s: s(avgOf(hours[h])) }));
       return out;
     });
+    const plain = (x) => String(x).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
     const car = recent.filter((t) => t.mode === 'auto' && t.stats);
     const steady = car.map((t) => t.stats.steadyShare).filter((x) => x != null);
     const carKm = car.reduce((x, t) => x + t.distance, 0) / 1000;
@@ -1790,6 +1804,9 @@
     return {
       zeitraum: 'letzte 30 Tage', profil_barrierefrei: settings.access.on ? ACCESS_LABEL[settings.access.type] : null,
       verkehrsmittel: groups, zeitfresser, wege,
+      auto_warten_je_km_nach_zeitfenster: windowStats(list, 1).map((x) => ({ zeitfenster: x.w.label, fahrten: x.n, warten_je_km_s: s(x.v) })),
+      auffaelligkeiten_7_tage: anomalyList(list).slice(0, 5).map((x) => ({ tag: dayLabel(x.e.t), ampel: labelFor(x.e), warten_s: s(x.e.wait), sonst_s: s(x.usual) })),
+      app_hinweise: computeTips().filter((x) => x.icon !== 'bell').map((x) => plain(x.title) + ': ' + plain(x.short)),
       fahrweise_auto: steady.length ? { gleichmaessig_anteil: Math.round(avgOf(steady) * 100) / 100, starke_bremsungen_je_100km: carKm ? Math.round(car.reduce((x, t) => x + (t.stats.brakes || 0), 0) / carKm * 1000) / 10 : null } : null,
       kosten_ampelhalte_eur_geschaetzt: costs.length ? Math.round(costs.reduce((x, c) => x + c.halts, 0) * 100) / 100 : null,
       umstiege: trs.length ? { anzahl: trs.length, warten_je_umstieg_s: s(avgOf(trs.map((r) => r.wait))), anschluss_verpasst: trs.filter((r) => r.missed).length } : null
