@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.14.2';
+  const VERSION = '0.15.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -121,6 +121,9 @@
   // Symbole aus dem Sprite in index.html
   const ic = (name, cls) => `<svg class="ic${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   const MODE_ICON = { auto: 'car', rad: 'bike', bus: 'bus', bahn: 'tram', fuss: 'walk', oepnv: 'tram' };
+  // Name einer Ampel oder eines Wegs zum Antippen: öffnet die kleine Karte
+  const placeBtn = (label, lat, lon, kind) => `<button type="button" class="place" data-peek="${kind || 's'}" data-lat="${lat}" data-lon="${lon}" data-name="${esc(label)}">${esc(label)}</button>`;
+  const placeFor = (e) => placeBtn(labelFor(e), e.lat, e.lon);
   const cardHead = (icon, title, meta, cls) => `<div class="card-head"><span class="chip${cls ? ' ' + cls : ''}">${ic(icon)}</span><div>${meta ? `<span class="meta">${meta}</span>` : ''}<h3>${title}</h3></div></div>`;
 
   // ---------- Ampeldaten aus OpenStreetMap ----------
@@ -967,7 +970,7 @@
       const idx = reviewTrip.events.indexOf(e);
       const tags = e.tags || [];
       return `<article class="rev" data-idx="${idx}">
-        <div class="rev-head"><span class="chip sm">${ic('light')}</span><div class="rev-title"><strong>${esc(labelFor(e))}</strong><span class="small muted">${[dirName(e.heading), e.halts > 1 ? `${e.halts} Halte` : '', e.queued ? 'im Rückstau' : '', new Date(e.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr'].filter(Boolean).map(esc).join(' · ')}</span></div><span class="rev-wait">${ic('hourglass')}${fmtDur(e.wait)} min</span></div>
+        <div class="rev-head"><span class="chip sm">${ic('light')}</span><div class="rev-title"><strong>${placeFor(e)}</strong><span class="small muted">${[dirName(e.heading), e.halts > 1 ? `${e.halts} Halte` : '', e.queued ? 'im Rückstau' : '', new Date(e.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr'].filter(Boolean).map(esc).join(' · ')}</span></div><span class="rev-wait">${ic('hourglass')}${fmtDur(e.wait)} min</span></div>
         <div class="thumbs" role="group" aria-label="Bewertung für ${esc(labelFor(e))}">
           <button type="button" class="btn up" data-rate="1" aria-pressed="${e.rating === 1}">${ic('thumb')}Gut</button>
           <button type="button" class="btn down" data-rate="-1" aria-pressed="${e.rating === -1}">${ic('thumb', 'flip')}Schlecht</button>
@@ -1085,7 +1088,7 @@
     const rowList = ag.approaches.sort((a, b) => b.wait - a.wait).map((a) => {
       const n = a.halts + a.passes;
       const rating = a.up || a.down ? `${a.up} / ${a.down}` : '–';
-      return `<tr><td>${esc(labelFor(a.sample))}</td><td>${dirShort(a.h)}</td><td>${n}</td><td>${fmtPct(a.halts / n)}</td><td>${a.halts ? fmtS(a.wait / a.halts) : '–'}</td><td>${rating}</td></tr>`;
+      return `<tr><td>${placeFor(a.sample)}</td><td>${dirShort(a.h)}</td><td>${n}</td><td>${fmtPct(a.halts / n)}</td><td>${a.halts ? fmtS(a.wait / a.halts) : '–'}</td><td>${rating}</td></tr>`;
     });
     const tripList = list.slice().sort((a, b) => b.start - a.start).map((t) => {
       const h = t.events.filter((e) => e.type === 'halt' && e.signal);
@@ -1104,7 +1107,7 @@
         <div class="kpi">${ic('clock')}<b>${ag.halts ? fmtS(ag.wait / ag.halts) : '–'}</b><span>Ø Wartezeit je Halt</span></div>
       </div>
       ${costSummary(list)}
-      ${worst ? `<div class="card worst">${cardHead('alert', 'Deine nervigste Ampel', '', 'bad')}<p><strong>${esc(labelFor(worst.sample))}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><ul class="facts"><li>${ic('light')}<span>gehalten</span><b>${worst.halts}×</b></li><li>${ic('hourglass')}<span>zusammen</span><b>${fmtDur(worst.wait)} min</b></li><li>${ic('clock')}<span>längster Halt</span><b>${fmtDur(worst.maxWait)} min</b></li></ul></div>` : ''}
+      ${worst ? `<div class="card worst">${cardHead('alert', 'Deine nervigste Ampel', '', 'bad')}<p><strong>${placeFor(worst.sample)}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><ul class="facts"><li>${ic('light')}<span>gehalten</span><b>${worst.halts}×</b></li><li>${ic('hourglass')}<span>zusammen</span><b>${fmtDur(worst.wait)} min</b></li><li>${ic('clock')}<span>längster Halt</span><b>${fmtDur(worst.maxWait)} min</b></li></ul></div>` : ''}
       <h3 class="sec">${ic('light')}Alle Ampeln</h3>
       ${table(rowList.slice(0, 8))}
       ${rest(rowList, 8, 'Alle Ampeln anzeigen', table)}
@@ -1225,6 +1228,35 @@
     const u = b[0] === a[0] ? 1 : Math.min(1, Math.max(0, (s - a[0]) / (b[0] - a[0])));
     return 'rgb(' + a[1].map((x, i) => Math.round(x + (b[1][i] - x) * u)).join(',') + ')';
   }
+  // ---------- Kleine Karte für einen Ort oder Weg ----------
+  let peekMap = null, peekLayer = null;
+  function openPeek(btn) {
+    const dlg = $('#map-peek');
+    $('#peek-title').textContent = btn.dataset.name || '';
+    const pts = btn.dataset.peek === 'r'
+      ? btn.dataset.pts.split(';').map((s) => s.split(',').map(Number)).filter((p) => isFinite(p[0]) && isFinite(p[1]))
+      : [[Number(btn.dataset.lat), Number(btn.dataset.lon)]];
+    $('#peek-meta').textContent = btn.dataset.peek === 'r' ? `${pts.length} Ampeln auf diesem Weg · grün: erste, rot: letzte Ampel` : 'Ampel, an der du gewartet hast';
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    if (typeof L === 'undefined' || !pts.length) { $('#peek-meta').textContent = 'Die Karte braucht eine Internetverbindung.'; return; }
+    if (!peekMap) {
+      peekMap = L.map('peek-map', { zoomControl: true, attributionControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap-Mitwirkende' }).addTo(peekMap);
+    }
+    if (peekLayer) peekLayer.remove();
+    peekLayer = L.layerGroup().addTo(peekMap);
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1a7f52';
+    if (pts.length > 1) L.polyline(pts, { color: accent, weight: 4, opacity: 0.7 }).addTo(peekLayer);
+    pts.forEach((p, i) => L.circleMarker(p, { radius: pts.length > 1 && i > 0 && i < pts.length - 1 ? 5 : 9, color: '#ffffff', weight: 2, fillColor: i === pts.length - 1 ? '#d64933' : accent, fillOpacity: 1 }).addTo(peekLayer));
+    setTimeout(() => {
+      peekMap.invalidateSize();
+      if (pts.length > 1) peekMap.fitBounds(pts, { padding: [24, 24], maxZoom: 17 }); else peekMap.setView(pts[0], 17);
+    }, 60);
+  }
+  document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button.place');
+    if (b) { ev.preventDefault(); ev.stopPropagation(); openPeek(b); }
+  }, true);
   function renderMap() {
     const ag = aggregate(trips);
     const empty = !ag.per.length;
@@ -1484,7 +1516,7 @@
     if (Object.keys(byMode).length >= 2) {
       body += `<div class="compare">${Object.keys(byMode).map((m) => `<div>${ic(MODE_ICON[m])}<span>${cap(GROUP_WITH[m])}: Ø ${durText(avgOf(byMode[m].map((t) => t.end - t.start)))} unterwegs, ${durText(avgOf(byMode[m].map(tripWait)))} an Ampeln</span></div>`).join('')}</div>`;
     }
-    return `<div class="card"><div class="card-head"><span class="chip">${ic('route')}</span><div><span class="meta">Dein Weg · ${g.trips.length}× unterwegs</span><div class="route-name">${esc(labelFor(g.first))}<span class="arrow" aria-label="nach">→</span>${esc(labelFor(g.last))}</div></div></div>${body}</div>`;
+    return `<div class="card"><div class="card-head"><span class="chip">${ic('route')}</span><div><span class="meta">Dein Weg · ${g.trips.length}× unterwegs</span><div class="route-name">${routeName(g)}</div></div></div>${body}</div>`;
   }
   function modeCard(group) {
     const since = Date.now() - 30 * 864e5;
@@ -1603,7 +1635,8 @@
   const BIKE_KMH = 15, WALK_KMH = 4.8;   // Annahmen für Schätzungen
   const median = (xs) => { const v = xs.slice().sort((x, y) => x - y), m = Math.floor(v.length / 2); return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
   const dayLabel = (t) => new Date(t).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
-  const routeName = (g) => `${esc(labelFor(g.first))}<span class="arrow" aria-label="nach">→</span>${esc(labelFor(g.last))}`;
+  const routePts = (g) => g.trips[0].events.filter((e) => e.signal).map((e) => `${e.lat},${e.lon}`).join(';');
+  const routeName = (g) => `<button type="button" class="place" data-peek="r" data-pts="${routePts(g)}" data-name="${esc(labelFor(g.first))} → ${esc(labelFor(g.last))}">${esc(labelFor(g.first))}<span class="arrow" aria-label="nach">→</span>${esc(labelFor(g.last))}</button>`;
 
   // Ungewöhnlich lange Wartezeit an einer Ampel in den letzten 7 Tagen, verglichen mit den übrigen Besuchen
   function tipAnomalies(list) {
@@ -1612,7 +1645,7 @@
     const first = out[0];
     return { prio: 0, icon: 'alert', cls: 'amber', title: 'Auffällig auf deinen Wegen',
       short: `${esc(labelFor(first.e))}: ${durText(first.e.wait)} gewartet, sonst Ø ${durText(first.usual)}.`,
-      html: `<ul class="facts">${out.slice(0, 3).map((x) => `<li>${ic('light')}<span>${dayLabel(x.e.t)} · ${esc(labelFor(x.e))}</span><b>${durText(x.e.wait)}</b></li>`).join('')}</ul>
+      html: `<ul class="facts">${out.slice(0, 3).map((x) => `<li>${ic('light')}<span>${dayLabel(x.e.t)} · ${placeFor(x.e)}</span><b>${durText(x.e.wait)}</b></li>`).join('')}</ul>
         <p class="note">${ic('info')}<span>Sonst wartest du dort Ø ${out.slice(0, 3).map((x) => durText(x.usual)).join(' bzw. ')}. Vielleicht Baustelle, Sperrung oder Stau.</span></p>` };
   }
   function anomalyList(list) {
@@ -1677,7 +1710,7 @@
     const what = top.length === 1 ? 'eine Ampel' : `${top.length} Ampeln`;
     return { prio: 2, icon: 'hourglass', cls: 'bad', title: 'Deine größten Zeitfresser',
       short: `${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}.`,
-      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => { const o = othersAt(x.signal, x.h); return `<li>${ic('light')}<span>${esc(labelFor(x.sample))}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}${o ? `<span class="others">Andere (${o.n}): ${fmtPct(o.share)} mit Halt, Ø ${durText(o.avg)}</span>` : ''}</span><b>${durText(x.wait)}</b></li>`; }).join('')}</ul>` };
+      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => { const o = othersAt(x.signal, x.h); return `<li>${ic('light')}<span>${placeFor(x.sample)}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}${o ? `<span class="others">Andere (${o.n}): ${fmtPct(o.share)} mit Halt, Ø ${durText(o.avg)}</span>` : ''}</span><b>${durText(x.wait)}</b></li>`; }).join('')}</ul>` };
   }
   // Autofahrten: Wartezeit an Ampeln je km nach Zeitfenster
   // Autofahrten: Wartezeit an Ampeln je km je Zeitfenster
@@ -1750,11 +1783,29 @@
   let tipsLoading = false;
   // ---------- KI-Einschätzung ----------
   const kiState = { busy: false, error: '', result: store.get('ki', null) };
+  // Ampelnamen im KI-Text antippbar machen: nur genaue Treffer, längste Namen zuerst
+  function kiLinker() {
+    const known = {};
+    for (const t of trips) if (!t.demo) for (const e of t.events) if (e.signal) { const n = labelFor(e); if (n.length >= 6 && !known[n]) known[n] = e; }
+    const namesSorted = Object.keys(known).sort((x, y) => y.length - x.length);
+    return (text) => {
+      let out = esc(text);
+      const slots = [];
+      for (const n of namesSorted) {
+        const en = esc(n);
+        if (out.indexOf(en) < 0) continue;
+        out = out.split(en).join(`\u0000${slots.length}\u0000`);
+        slots.push(placeBtn(n, known[n].lat, known[n].lon));
+      }
+      return out.replace(/\u0000(\d+)\u0000/g, (m, i) => slots[Number(i)]);
+    };
+  }
   function kiCard() {
     if (!apiBase()) return '';
     if (!settings.server.ki) return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}<p class="small">Erlaube die KI-Einschätzung unter „Mehr“, dann formuliert eine KI aus deinen Werten persönliche Empfehlungen.</p></div>`;
     const r = kiState.result;
-    const body = r ? `<p>${esc(r.einschaetzung)}</p>${r.groesster_hebel ? `<p class="tip">${ic('spark')}<span><strong>Größter Hebel:</strong> ${esc(r.groesster_hebel)}</span></p>` : ''}<ul class="ki-list">${r.empfehlungen.map((e) => `<li>${ic('bulb')}<span><strong>${esc(e.titel)}</strong><br>${esc(e.text)}</span></li>`).join('')}</ul>
+    const L2 = kiLinker();
+    const body = r ? `<p>${L2(r.einschaetzung)}</p>${r.groesster_hebel ? `<p class="tip">${ic('spark')}<span><strong>Größter Hebel:</strong> ${L2(r.groesster_hebel)}</span></p>` : ''}<ul class="ki-list">${r.empfehlungen.map((e) => `<li>${ic('bulb')}<span><strong>${L2(e.titel)}</strong><br>${L2(e.text)}</span></li>`).join('')}</ul>
       <p class="note">${ic('info')}<span>KI-Text von ${esc(r.modell || 'Mistral')}, erstellt am ${esc(dayLabel(r.t))} Er kann Fehler enthalten.</span></p>` : '<p class="small">Eine KI formuliert aus deinen zusammengefassten Werten eine Einschätzung und Empfehlungen.</p>';
     return `<div class="card">${cardHead('spark', 'KI-Einschätzung', 'Mistral, EU')}${body}${kiState.error ? `<p class="msg warn">${esc(kiState.error)}</p>` : ''}
       <button type="button" class="btn${r ? '' : ' primary'}" id="btn-ki" ${kiState.busy ? 'disabled' : ''}>${ic('spark')}${kiState.busy ? 'Einschätzung wird erstellt …' : r ? 'Neu einschätzen' : 'Einschätzung holen'}</button></div>`;

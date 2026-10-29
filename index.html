@@ -56,6 +56,7 @@
   <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
   <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.6A3.5 3.5 0 0 0 7 18.5z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4"/></symbol>
 </svg>
 <header class="top">
@@ -249,6 +250,12 @@
     <p id="more-msg" class="msg" role="status" aria-live="polite"></p>
   </section>
 </main>
+
+<dialog id="map-peek" class="peek" aria-labelledby="peek-title">
+  <div class="peek-head"><h3 id="peek-title"></h3><form method="dialog"><button class="btn peek-close" aria-label="Karte schließen"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></form></div>
+  <div id="peek-map" role="region" aria-label="Karte des Orts"></div>
+  <p id="peek-meta" class="small muted"></p>
+</dialog>
 
 <nav class="tabs" aria-label="Hauptnavigation">
   <button type="button" data-view="start" aria-current="page"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span>Heute</span></button>
