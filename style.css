@@ -63,7 +63,7 @@ p{margin:0}
 .facts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:15px}
 .facts li{display:flex;align-items:center;gap:10px}
 .facts .ic{color:var(--muted)}
-.facts b{margin-left:auto;font-variant-numeric:tabular-nums}
+.facts b{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;padding-left:8px}
 
 .btn{font:inherit;font-weight:600;min-height:48px;padding:10px 16px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:10px}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
@@ -162,7 +162,7 @@ td{font-variant-numeric:tabular-nums}
 .row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px}
 select{font:inherit;min-height:44px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 
-.tabs{display:grid;grid-template-columns:repeat(4,1fr);background:var(--nav);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--nav);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
 .tabs button{font:inherit;font-size:12px;font-weight:600;min-height:60px;border:0;background:transparent;color:var(--on-nav);opacity:.7;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
 .tabs button .ic{width:24px;height:24px}
 .tabs button[aria-current="page"]{opacity:1;box-shadow:inset 0 3px 0 var(--amber)}
@@ -200,3 +200,10 @@ details.tag-box .tags{margin-top:4px}
 .legs .ic{color:var(--accent)}
 .legs .arrow{color:var(--muted);font-weight:400}
 .btn.miss[aria-pressed="true"]{background:var(--bad);border-color:var(--bad);color:#fff}
+.alt{display:flex;flex-direction:column;gap:8px}
+.alt div{display:flex;align-items:center;gap:10px;font-size:15px}
+.alt .ic{color:var(--accent)}
+.alt b{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag-est{font-size:12px;font-weight:600;color:var(--muted);background:var(--bg);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.top-tip .btn{align-self:flex-start;min-height:44px}
+.card-head h3 .arrow{padding:0 4px;color:var(--muted);font-weight:400}

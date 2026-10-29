@@ -143,6 +143,13 @@
     <button id="btn-review-done" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Fertig</button>
   </section>
 
+  <!-- Tipps -->
+  <section id="view-tips" class="view" hidden aria-labelledby="h-tips">
+    <h2 id="h-tips">Deine Tipps</h2>
+    <p class="note"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><span>Ausgewertet auf deinem Gerät aus deinen eigenen Fahrten und Wegen. Das ist eine feste Auswertung, noch keine KI. Schätzungen sind als solche gekennzeichnet.</span></p>
+    <div id="tips-body" class="today"></div>
+  </section>
+
   <!-- Statistik -->
   <section id="view-stats" class="view" hidden aria-labelledby="h-stats">
     <h2 id="h-stats">Deine Wartezeit</h2>
@@ -231,6 +238,7 @@
 
 <nav class="tabs" aria-label="Hauptnavigation">
   <button type="button" data-view="start" aria-current="page"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span>Heute</span></button>
+  <button type="button" data-view="tips"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg><span>Tipps</span></button>
   <button type="button" data-view="stats"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Statistik</span></button>
   <button type="button" data-view="map"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg><span>Karte</span></button>
   <button type="button" data-view="more"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg><span>Mehr</span></button>

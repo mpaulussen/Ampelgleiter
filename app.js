@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.12.1';
+  const VERSION = '0.13.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1400,6 +1400,7 @@
       if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
     if (name === 'stats') renderStats();
+    if (name === 'tips') renderTips();
     if (name === 'map') renderMap();
     if (name === 'start') { renderToday(); renderLastTrip(); }
     if (name === 'more') updateSignalsInfo();
@@ -1452,24 +1453,27 @@
     }
     return groups.filter((g) => g.trips.length >= 2);
   }
+  // Abfahrtsstunde mit der geringsten Wartezeit, verglichen mit jetzt oder mit allen anderen Stunden
+  function bestHour(own) {
+    const now = new Date().getHours();
+    const hours = {};
+    for (const t of own) { const h = new Date(t.start).getHours(); (hours[h] = hours[h] || []).push(tripWait(t)); }
+    const hs = Object.keys(hours).map(Number);
+    const nowAvg = hours[now] ? avgOf(hours[now]) : avgOf(own.map(tripWait));
+    if (hs.length < 2) return { nowAvg };
+    const best = hs.reduce((b, h) => (avgOf(hours[h]) < avgOf(hours[b]) ? h : b), hs[0]);
+    const ref = hours[now] ? nowAvg : avgOf(own.filter((t) => new Date(t.start).getHours() !== best).map(tripWait));
+    if (best === now || ref - avgOf(hours[best]) < 30000) return { nowAvg };
+    return { nowAvg, best, bestAvg: avgOf(hours[best]), ref,
+      text: `Am wenigsten gewartet hast du bei Abfahrt zwischen ${best} und ${best + 1} Uhr: Ø ${durText(avgOf(hours[best]))} statt ${durText(ref)}.` };
+  }
   function routeCard(g, group) {
     const own = g.trips.filter((t) => MODE_GROUP[t.mode] === group);
-    const now = new Date().getHours();
     let body;
     if (own.length) {
-      const hours = {};
-      for (const t of own) { const h = new Date(t.start).getHours(); (hours[h] = hours[h] || []).push(tripWait(t)); }
-      const hs = Object.keys(hours).map(Number);
-      const nowAvg = hours[now] ? avgOf(hours[now]) : avgOf(own.map(tripWait));
-      body = `<div class="big-line">${ic('hourglass')}<span>Jetzt los: etwa <b>${durText(nowAvg)}</b> an Ampeln</span></div>`;
-      if (hs.length >= 2) {
-        const best = hs.reduce((b, h) => (avgOf(hours[h]) < avgOf(hours[b]) ? h : b), hs[0]);
-        // verglichen mit jetzt, oder ohne Fahrten zu dieser Stunde mit allen anderen Abfahrtszeiten
-        const ref = hours[now] ? nowAvg : avgOf(own.filter((t) => new Date(t.start).getHours() !== best).map(tripWait));
-        if (best !== now && ref - avgOf(hours[best]) >= 30000) {
-          body += `<p class="tip">${ic('bulb')}<span>Am wenigsten gewartet hast du bei Abfahrt zwischen ${best} und ${best + 1} Uhr: Ø ${durText(avgOf(hours[best]))} statt ${durText(ref)}.</span></p>`;
-        }
-      }
+      const bh = bestHour(own);
+      body = `<div class="big-line">${ic('hourglass')}<span>Jetzt los: etwa <b>${durText(bh.nowAvg)}</b> an Ampeln</span></div>`;
+      if (bh.text) body += `<p class="tip">${ic('bulb')}<span>${bh.text}</span></p>`;
     } else {
       body = `<p class="note">${ic('info')}<span>${cap(GROUP_WITH[group])} bist du diesen Weg noch nicht ${words(group).past}.</span></p>`;
     }
@@ -1521,9 +1525,142 @@
     const html = routes.length
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
       : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small">Wenn du dieselbe Strecke zwei-, dreimal zurückgelegt hast, erkennt Flowtown deinen Weg und zeigt dir, wann du am wenigsten wartest. Das bleibt auf deinem Gerät.</p></div>`];
+    const top = computeTips()[0];
+    if (top) html.unshift(`<div class="card top-tip">${cardHead('bulb', 'Dein Tipp', '', 'amber')}<p>${top.short}</p><button type="button" class="btn" data-goto="tips">${ic('bulb')}Alle Tipps</button></div>`);
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
     $('#today').innerHTML = html.join('');
+  }
+
+  // ---------- Tipps: feste Auswertung auf dem Gerät, noch ohne KI ----------
+  const BIKE_KMH = 15, WALK_KMH = 4.8;   // Annahmen für Schätzungen
+  const median = (xs) => { const v = xs.slice().sort((x, y) => x - y), m = Math.floor(v.length / 2); return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+  const dayLabel = (t) => new Date(t).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  const routeName = (g) => `${esc(labelFor(g.first))}<span class="arrow" aria-label="nach">→</span>${esc(labelFor(g.last))}`;
+
+  // Ungewöhnlich lange Wartezeit an einer Ampel in den letzten 7 Tagen, verglichen mit den übrigen Besuchen
+  function tipAnomalies(list) {
+    const since = Date.now() - 7 * 864e5;
+    const visits = {};
+    for (const t of list) for (const e of t.events) if (e.signal) (visits[e.signal] = visits[e.signal] || []).push({ e, trip: t.id });
+    const out = [];
+    for (const t of list) {
+      if (t.start < since) continue;
+      for (const e of t.events) {
+        if (e.type !== 'halt' || !e.signal || e.wait < 60000) continue;
+        const others = visits[e.signal].filter((v) => v.trip !== t.id && (e.heading == null || v.e.heading == null || angDiff(v.e.heading, e.heading) <= 45))
+          .map((v) => (v.e.type === 'halt' ? v.e.wait : 0));
+        if (others.length < 3) continue;
+        const usual = median(others);
+        if (e.wait >= 2 * usual + 30000) out.push({ e, usual });
+      }
+    }
+    if (!out.length) return null;
+    out.sort((x, y) => y.e.t - x.e.t);
+    const first = out[0];
+    return { prio: 0, icon: 'alert', cls: 'amber', title: 'Auffällig auf deinen Wegen',
+      short: `${esc(labelFor(first.e))}: ${durText(first.e.wait)} gewartet, sonst Ø ${durText(first.usual)}.`,
+      html: `<ul class="facts">${out.slice(0, 3).map((x) => `<li>${ic('light')}<span>${dayLabel(x.e.t)} · ${esc(labelFor(x.e))}</span><b>${durText(x.e.wait)}</b></li>`).join('')}</ul>
+        <p class="note">${ic('info')}<span>Sonst wartest du dort Ø ${out.slice(0, 3).map((x) => durText(x.usual)).join(' bzw. ')}. Vielleicht Baustelle, Sperrung oder Stau.</span></p>` };
+  }
+  // Wege: beste Abfahrtszeit und andere Verkehrsmittel im Vergleich
+  function tipRoutes(list) {
+    return findRoutes(list).slice(0, 3).map((g) => {
+      const km = avgOf(g.trips.map((t) => t.distance)) / 1000;
+      const byMode = {};
+      for (const t of g.trips) (byMode[MODE_GROUP[t.mode]] = byMode[MODE_GROUP[t.mode]] || []).push(t);
+      const car = byMode.auto || [];
+      const carMs = car.length ? avgOf(car.map((t) => t.end - t.start)) : null;
+      const rows = [];
+      const row = (m, label, ms, est, extra) => rows.push(`<div>${ic(MODE_ICON[m])}<span>${label}${est ? ' <span class="tag-est">geschätzt</span>' : ''}${extra ? `<br><span class="small muted">${extra}</span>` : ''}</span><b>${durText(ms)}</b></div>`);
+      if (car.length) {
+        const costs = car.map(tripCosts).filter(Boolean);
+        const energy = costs.filter((c) => c.energy != null);
+        const cost = energy.length ? avgOf(energy.map((c) => c.energy)) : avgOf(costs.map((c) => c.halts));
+        row('auto', 'Auto', carMs, false, `davon ${durText(avgOf(car.map(tripWait)))} an Ampeln · ca. ${fmtEuro(cost)} ${energy.length ? 'Sprit oder Strom' : 'fürs Warten'}`);
+      }
+      if (byMode.oepnv) row('bahn', 'Bus und Bahn', avgOf(byMode.oepnv.map((t) => t.end - t.start)), false, `davon ${durText(avgOf(byMode.oepnv.map(tripWait)))} an Ampeln`);
+      let bikeMs = null;
+      if (byMode.rad) row('rad', 'Rad', bikeMs = avgOf(byMode.rad.map((t) => t.end - t.start)), false, `davon ${durText(avgOf(byMode.rad.map(tripWait)))} an Ampeln`);
+      else if (km <= 15) row('rad', 'Rad', bikeMs = km / BIKE_KMH * 3600000, true, `${fmtNum(km, 1)} km bei ${BIKE_KMH} km/h, ohne Ampeln`);
+      if (byMode.fuss) row('fuss', 'Zu Fuß', avgOf(byMode.fuss.map((t) => t.end - t.start)), false);
+      else if (km <= 3) row('fuss', 'Zu Fuß', km / WALK_KMH * 3600000, true, `${fmtNum(km, 1)} km bei ${fmtNum(WALK_KMH, 1)} km/h`);
+      const bh = car.length ? bestHour(car) : bestHour(g.trips);
+      let short = bh.text || '';
+      let prio = bh.text ? 1.5 : 2.5;
+      // Rad als Alternative zum Auto oder zu Bus und Bahn
+      const baseMs = carMs || (byMode.oepnv ? avgOf(byMode.oepnv.map((t) => t.end - t.start)) : null);
+      if (baseMs && bikeMs && !byMode.rad && bikeMs <= baseMs * 1.25) {
+        short = `Mit dem Rad wärst du auf diesem Weg etwa gleich schnell wie ${carMs ? 'mit dem Auto' : 'mit Bus und Bahn'} (geschätzt).`;
+        prio = 1;
+      }
+      return { prio, icon: 'route', title: routeName(g), meta: `Dein Weg · ${g.trips.length}× unterwegs`, short: short || `${g.trips.length}× unterwegs auf diesem Weg.`,
+        html: `${bh.text ? `<p class="tip">${ic('bulb')}<span>${bh.text}</span></p>` : ''}${prio === 1 ? `<p class="tip">${ic('bike')}<span>${short}</span></p>` : ''}<div class="alt">${rows.join('')}</div>
+          <p class="note">${ic('bell')}<span>Fahrpläne von Bus und Bahn als Alternative kommen mit dem Flowtown-Server.</span></p>` };
+    });
+  }
+  function tipTimeEaters(list) {
+    const ag = aggregate(list);
+    if (!ag.halts) return null;
+    const top = ag.approaches.filter((x) => x.halts).sort((x, y) => y.wait - x.wait).slice(0, 3);
+    const share = top.reduce((x, y) => x + y.wait, 0) / ag.wait;
+    const what = top.length === 1 ? 'eine Ampel' : `${top.length} Ampeln`;
+    return { prio: 2, icon: 'hourglass', cls: 'bad', title: 'Deine größten Zeitfresser',
+      short: `${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}.`,
+      html: `<p>${fmtPct(share)} deiner Wartezeit an Ampeln entfallen auf ${what}:</p><ul class="facts">${top.map((x) => `<li>${ic('light')}<span>${esc(labelFor(x.sample))}${x.h != null ? `, Richtung ${esc(dirShort(x.h))}` : ''}</span><b>${durText(x.wait)}</b></li>`).join('')}</ul>` };
+  }
+  // Autofahrten: Wartezeit an Ampeln je km nach Zeitfenster
+  function tipWindows(list) {
+    const per = {};
+    for (const t of list) {
+      if (t.mode !== 'auto' || t.distance < 1000) continue;
+      const w = timeWindow(t.start);
+      (per[w] = per[w] || []).push(tripWait(t) / (t.distance / 1000));
+    }
+    const ws = WINDOWS.filter((w) => per[w.id] && per[w.id].length >= 2).map((w) => ({ w, v: avgOf(per[w.id]), n: per[w.id].length }));
+    if (ws.length < 2) return null;
+    ws.sort((x, y) => x.v - y.v);
+    const best = ws[0], worst = ws[ws.length - 1];
+    if (worst.v - best.v < 5000) return null;
+    return { prio: 3, icon: 'clock', title: 'Wann es besser fließt', meta: 'Mit dem Auto, Wartezeit je km',
+      short: `${worst.w.label} wartest du je km am längsten, ${best.w.label} am kürzesten.`,
+      html: `<ul class="facts">${ws.map((x) => `<li>${ic('clock')}<span>${esc(x.w.label)} <span class="small muted">(${x.n} Fahrten)</span></span><b>${durText(x.v)}</b></li>`).join('')}</ul>` };
+  }
+  function tipStyle(list) {
+    const since = Date.now() - 30 * 864e5;
+    const car = list.filter((t) => t.mode === 'auto' && t.start >= since && t.stats);
+    const steady = car.map((t) => t.stats.steadyShare).filter((x) => x != null);
+    const km = car.reduce((x, t) => x + t.distance, 0) / 1000;
+    if (!steady.length || km < 5) return null;
+    const share = avgOf(steady), brakes = car.reduce((x, t) => x + (t.stats.brakes || 0), 0) / km * 100;
+    if (share >= 0.4 && brakes < 2) return null;
+    return { prio: 4, icon: 'wave', title: 'Gleichmäßiger fahren', meta: 'Die letzten 30 Tage',
+      short: `Du fährst zu Ø ${fmtPct(share)} gleichmäßig.`,
+      html: `<ul class="facts"><li>${ic('wave')}<span>gleichmäßig gefahren</span><b>${fmtPct(share)}</b></li><li>${ic('alert')}<span>starke Bremsungen je 100 km</span><b>${fmtNum(brakes, 1)}</b></li></ul>
+        <p class="note">${ic('bulb')}<span>Früh vom Gas gehen und auf eine rote Ampel zurollen: Oft wird es grün, bevor du ganz anhalten musst. Das spart Sprit und Bremsen.</span></p>` };
+  }
+  function tipCosts(list) {
+    const since = Date.now() - 30 * 864e5;
+    const cs = list.filter((t) => t.start >= since).map(tripCosts).filter(Boolean);
+    if (!cs.length) return null;
+    const halts = cs.reduce((x, c) => x + c.halts, 0);
+    if (halts < 0.05) return null;
+    return { prio: 5, icon: 'euro', cls: 'amber', title: 'Was dich Ampeln kosten', meta: 'Die letzten 30 Tage, geschätzt',
+      short: `Ampelhalte kosteten dich etwa ${fmtEuro(halts)}.`,
+      html: `<p>Leerlauf und Wiederanfahren an Ampeln kosteten dich bei ${cs.length} Autofahrt${cs.length === 1 ? '' : 'en'} etwa <strong>${fmtEuro(halts)}</strong>.</p>` };
+  }
+  function computeTips() {
+    const list = trips.filter((t) => !t.demo);
+    return [tipAnomalies(list)].concat(tipRoutes(list), [tipTimeEaters(list), tipWindows(list), tipStyle(list), tipCosts(list)])
+      .filter(Boolean).sort((x, y) => x.prio - y.prio);
+  }
+  function renderTips() {
+    const tips = computeTips();
+    const news = `<div class="card">${cardHead('bell', 'Meldungen', 'Sperrungen, Baustellen, Ausfälle')}<p class="small">Meldungen der Stadt und von moBiel zu deinen Wegen erscheinen hier, sobald der Flowtown-Server angebunden ist. Angezeigt wird nur, was deine Wege betrifft.</p></div>`;
+    $('#tips-body').innerHTML = (tips.length
+      ? tips.map((x) => `<div class="card">${cardHead(x.icon, x.title, x.meta || '', x.cls)}${x.html}</div>`).join('')
+      : `<div class="card">${cardHead('bulb', 'Noch zu wenig Daten')}<p class="small">Nach ein paar Fahrten auf deinen üblichen Wegen findest du hier deine Zeitfresser, die besten Abfahrtszeiten und Alternativen mit Rad oder zu Fuß.</p></div>`) + news;
+    requestNames(trips.flatMap((t) => t.events.filter((e) => e.signal)), () => { if (!$('#view-tips').hidden) renderTips(); });
   }
 
   function renderLastTrip() {
@@ -1536,6 +1673,7 @@
 
   // ---------- Ereignisse ----------
   $('#btn-start').addEventListener('click', startTrip);
+  $('#today').addEventListener('click', (ev) => { const b = ev.target.closest('[data-goto]'); if (b) showView(b.dataset.goto); });
   $('#btn-transfer').addEventListener('click', startTransfer);
   $('#btn-next-bahn').addEventListener('click', () => endTransfer('bahn'));
   $('#btn-next-bus').addEventListener('click', () => endTransfer('bus'));
