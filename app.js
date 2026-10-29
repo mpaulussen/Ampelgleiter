@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.12.0';
+  const VERSION = '0.12.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -458,7 +458,9 @@
           const near = findSignal(s, s.heading, cfg.haltRadius);
           const atStop = rec.transfer ? !near && nearStop(s) : (rec.curMode === 'bahn' || rec.curMode === 'bus') && nearStop(s);
           const sig = atStop ? null : near;
-          rec.stop = { t0: s.t, lat: s.lat, lon: s.lon, heading: s.heading, signal: sig, atStop };
+          // keine Ampel in der Nähe, aber eine voraus: vermutlich Stau davor (endgültig zugeordnet wird am Ende der Fahrt)
+          const queueSig = !sig && !atStop ? findSignal(s, s.heading, QUEUE_M) : null;
+          rec.stop = { t0: s.t, lat: s.lat, lon: s.lon, heading: s.heading, signal: sig, atStop, queueSig };
           rec.fastSince = null;
         }
       } else {
@@ -477,7 +479,7 @@
     if (rec.transfer) {
       setDriveState(`Umstieg · ${fmtDur(t - rec.transfer.t)}`, 'transfer');
     } else if (rec.stop) {
-      const label = rec.stop.signal ? 'Halt an Ampel' : rec.stop.atStop ? 'Halt an Haltestelle' : 'Halt';
+      const label = rec.stop.signal ? 'Halt an Ampel' : rec.stop.queueSig ? 'Stau vor Ampel' : rec.stop.atStop ? 'Halt an Haltestelle' : 'Halt';
       setDriveState(`${label} · ${fmtDur(t - rec.stop.t0)}`, 'halt');
     } else {
       setDriveState(vs < cfg.stopV ? 'Langsam …' : 'Unterwegs', 'moving');
@@ -576,6 +578,7 @@
       at: [round5(s.lat), round5(s.lon)]   // wo wirklich gestanden wurde, für spätere Auswertungen
     };
     if (s.atStop) e.atStop = true;
+    if (!sigId && s.queueSig) e.queueSig = s.queueSig.id;
     e.mode = rec.curMode;   // Verkehrsmittel des Abschnitts
     ev.push(e);
   }
@@ -584,26 +587,27 @@
   function assignQueueHalts(trip) {
     const ev = trip.events;
     let changed = false;
-    for (let i = 0; i < ev.length; i++) {
+    // Rückwärts durch die Fahrt: eine Kette von Halten ohne Ampel vor einer Ampel ist ihr Rückstau,
+    // auch wenn er um eine Ecke reicht. Je Glied höchstens QUEUE_MS Abstand, alle bis QUEUE_M vor der Ampel.
+    let target = null, chainT = 0;
+    for (let i = ev.length - 1; i >= 0; i--) {
       const e = ev[i];
-      if (e.type !== 'halt' || e.signal || e.atStop) continue;
-      for (let j = i + 1; j < ev.length; j++) {
-        const n = ev[j];
-        if (n.t - (e.tEnd || e.t) > QUEUE_MS) break;
-        if (n.type === 'halt') {
-          // nächster Halt an einer Ampel: Rückstau davor zusammenfassen
-          if (n.signal && dist(e, n) <= QUEUE_M) {
-            n.wait += e.wait; n.halts += e.halts || 1; n.t = e.t; n.queued = true;
-            ev.splice(i, 1); i--; changed = true;
-          }
-          break;
-        }
-        if (n.type === 'pass' && dist(e, n) <= QUEUE_M && (e.heading == null || angDiff(bearing(e, n), e.heading) <= 45)) {
-          Object.assign(e, { signal: n.signal, distToSignal: Math.round(dist(e, n)), lat: n.lat, lon: n.lon, queued: true });
-          ev.splice(j, 1); changed = true;
-          break;
-        }
+      if (e.signal) { target = e; chainT = e.t; continue; }
+      if (e.type !== 'halt' || e.atStop) { target = null; continue; }
+      const ok = target && chainT - (e.tEnd || e.t) <= QUEUE_MS && dist(e, target) <= QUEUE_M &&
+        (target.type === 'halt' || e.heading == null || angDiff(bearing(e, target), e.heading) <= 45);
+      if (!ok) { target = null; continue; }
+      if (target.type === 'halt') {
+        target.wait += e.wait; target.halts = (target.halts || 1) + (e.halts || 1); target.t = e.t; target.queued = true;
+        ev.splice(i, 1);
+      } else {
+        // Durchfahrt nach dem Stau: der Halt davor gehört zu dieser Ampel
+        Object.assign(e, { signal: target.signal, distToSignal: Math.round(dist(e, target)), lat: target.lat, lon: target.lon, queued: true });
+        ev.splice(ev.indexOf(target), 1);
+        target = e;
       }
+      delete e.queueSig;
+      chainT = target.t; changed = true;
     }
     return changed;
   }
@@ -664,10 +668,10 @@
   function updateCounters() {
     if (!rec) return;
     const ev = rec.trip.events;
-    const halts = ev.filter((e) => e.type === 'halt' && e.signal);
+    const halts = ev.filter((e) => e.type === 'halt' && (e.signal || e.queueSig));   // Stau vor einer Ampel zählt mit
     $('#drive-pass').textContent = ev.filter((e) => e.type === 'pass').length;
-    $('#drive-halts').textContent = halts.length;
-    const running = rec.stop && rec.stop.signal && rec.samples.length ? rec.samples[rec.samples.length - 1].t - rec.stop.t0 : 0;
+    $('#drive-halts').textContent = new Set(halts.map((e) => e.signal || e.queueSig)).size;   // ein Stau vor einer Ampel ist ein Halt
+    const running = rec.stop && (rec.stop.signal || rec.stop.queueSig) && rec.samples.length ? rec.samples[rec.samples.length - 1].t - rec.stop.t0 : 0;
     $('#drive-wait').textContent = fmtDur(halts.reduce((a, e) => a + e.wait, 0) + running);
   }
   function showWarn(t) { const w = $('#drive-warn'); w.textContent = t; w.hidden = false; }
@@ -794,7 +798,10 @@
     if (!rec) return;
     if (rec.stop && rec.samples.length) endStop(rec.samples[rec.samples.length - 1].t);
     // Abschnitte abschließen; ein offener Umstieg war keiner (man ist ausgestiegen und zu Fuß weiter)
-    if (rec.trip.legs) closeLeg(nowT());
+    if (rec.trip.legs) {
+      if (!rec.transfer || nowT() - rec.legStart >= 5000) closeLeg(nowT());
+      if (rec.trip.legs.length < 2) delete rec.trip.legs;
+    }
     rec.transfer = null;
     stopWatching();
     const trip = rec.trip;
