@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.21.2';
+  const VERSION = '0.21.3';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1855,6 +1855,40 @@
     return h == null || angDiff(h, near[0].h) <= 50;
   }
   // Treffer je Weg, gleiche Straße zusammengefasst (HERE teilt Straßen in viele kurze Abschnitte)
+  // HERE nennt manche Abschnitte nicht (dann heißen sie nur „Straße“): nach den Ampeln auf dem eigenen Weg benennen,
+  // am liebsten nach Kreuzungen („Detmolder Straße zwischen Prießallee und Sieker“)
+  function lageName(it, line) {
+    if (it.titel && it.titel !== 'Straße') return it.titel;
+    const ends = [it.pts[0], it.pts[it.pts.length - 1]].map((p) => ({ lat: p[0], lon: p[1] }));
+    const named = line.pts.map((e) => ({ e, n: nameOf(e.signal) })).filter((x) => x.n);
+    const nearest = (p, cross) => {
+      let best = null, bd = 500;
+      for (const x of named) {
+        if (cross !== x.n.indexOf(' / ') > 0) continue;
+        const d = dist(x.e, p);
+        if (d < bd) { bd = d; best = x.n; }
+      }
+      return best;
+    };
+    const [ca, cb] = ends.map((p) => nearest(p, true));
+    const plain = ends.map((p) => nearest(p, false)).filter(Boolean);
+    const street = plain.length ? plain[0].replace(/\s+\d+\s*[a-z]?$/i, '') : null;
+    if (ca && cb && ca !== cb) {
+      const pa = ca.split(' / '), pb = cb.split(' / '), common = pa.find((x) => pb.includes(x));
+      const oa = pa.find((x) => x !== common), ob = pb.find((x) => x !== common);
+      if (common && oa && ob) return `${common} zwischen ${oa} und ${ob}`;
+    }
+    const c = ca || cb;
+    if (c) {
+      const parts = c.split(' / ');
+      return street && parts.includes(street) ? `${street} bei ${parts.find((x) => x !== street)}` : `Kreuzung ${c}`;
+    }
+    if (street) {
+      const num = plain.map((n) => (n.match(/\s(\d+\s*[a-z]?)$/i) || [])[1]).find(Boolean);
+      return num ? `${street} bei Nr. ${num}` : street;
+    }
+    return 'Abschnitt auf deinem Weg';
+  }
   function myLage(group) {
     const items = ((lageCache && lageCache.items) || []).filter((it) => it && Array.isArray(it.pts) && it.pts.length && (!LAGE_FOR[group] || LAGE_FOR[group].includes(it.art)));
     const lines = lageLines(group);
@@ -1863,8 +1897,8 @@
       const by = {};
       for (const it of items) {
         if (!onLine(it, line)) continue;
-        const k = it.titel;
-        const h = by[k] || (by[k] = { titel: it.titel, art: it.art, delay: 0, parts: [], texts: [], quellen: new Set(), richtungText: it.richtungText || '', line });
+        const k = lageName(it, line);
+        const h = by[k] || (by[k] = { titel: k, art: it.art, delay: 0, parts: [], texts: [], quellen: new Set(), richtungText: it.richtungText || '', line });
         if (LAGE_RANK[it.art] < LAGE_RANK[h.art]) h.art = it.art;
         if (it.delay) h.delay += it.delay;
         h.parts.push(it.pts);
