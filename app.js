@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.20.1';
+  const VERSION = '0.20.2';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2434,7 +2434,11 @@
   updateSignalsInfo();
   renderToday();
   renderLastTrip();
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+    // neue Version übernommen: einmal neu laden, damit sie sofort sichtbar ist (nie während einer Aufzeichnung)
+    if (navigator.serviceWorker.controller) navigator.serviceWorker.addEventListener('controllerchange', () => { if (!rec) location.reload(); });
+  }
 
   // Für Tests von außen erreichbar
   window.__ww = { onPosition: (p) => onPosition(p), state: () => ({ rec, trips, clusters }), demoRun };
