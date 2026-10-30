@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.18.1';
+  const VERSION = '0.19.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -703,6 +703,11 @@
     if (!window.isSecureContext) { msg.textContent = 'Standort geht nur über eine sichere Verbindung (https).'; return; }
     msg.textContent = 'Standort wird angefragt …';
     rec = newRecording(mode);
+    if (pendingPlan) {   // Fahrt mit Ziel: Name und geplante Zeit bleiben an der Fahrt, die Koordinaten nur bis zum Ende der Aufzeichnung
+      rec.target = { lat: pendingPlan.lat, lon: pendingPlan.lon };
+      rec.trip.plan = Object.assign({}, pendingPlan); delete rec.trip.plan.lat; delete rec.trip.plan.lon;
+      pendingPlan = null;
+    }
     if (settings.access.on) rec.trip.access = settings.access.type;   // Wartezeiten mit Einschränkung getrennt auswertbar
     rec.watchId = navigator.geolocation.watchPosition(
       (p) => { if (rec && rec.gpsCount === 0) { msg.textContent = ''; } onPosition(p); },
@@ -826,6 +831,8 @@
       const m = cellCenter(c.k);
       return dist(m, rec.first) > cut + 100 && dist(m, rec.last) > cut + 100;   // Datenschutz wie bei den Ereignissen
     });
+    // angekommen? Nur der Abstand zum Ziel wird gemerkt, nicht der Ort
+    if (trip.plan && rec.target && rec.last) trip.plan.rest = Math.round(dist(rec.last, rec.target) / 100) / 10;
     const st = rec.st;
     trip.stats = {
       movingMs: Math.round(st.moving),
@@ -877,6 +884,34 @@
     requestNames(halts, renderReview);
   }
   const fmtNum = (x, d) => x.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+  // Zeit in Feldern, in denen es im Schnitt unter 20 km/h (Rad: 8 km/h) voranging; eine Schätzung, Ampeln werden abgezogen
+  function slowMs(t) {
+    const lim = t.mode === 'rad' ? 8 : 20;
+    return (t.cells || []).reduce((a, c) => a + (c.t >= 3 && c.d / c.t * 3.6 < lim ? c.t * 1000 : 0), 0);
+  }
+  function planParts(t) {
+    const ist = (t.end || t.start) - t.start, amp = tripWait(t);
+    return { ist, plan: t.plan.dauer * 1000, amp, slow: Math.max(0, slowMs(t) - amp) };
+  }
+  function planHtml(t) {
+    const p = t.plan, { ist, plan, amp, slow } = planParts(t);
+    const max = Math.max(ist, plan, 1), pc = (x) => (x / max * 100).toFixed(1) + '%';
+    const diff = ist - plan, dm = Math.round(Math.abs(diff) / 60000);
+    const verdict = dm < 2 ? 'Fast genau wie geplant' : diff > 0 ? `${dm} min länger als geplant` : `${dm} min schneller als geplant`;
+    const flow = Math.max(0, ist - slow - amp);
+    const reported = (p.meldungen || []).map((m) => `${m.titel} (${LAGE_LABEL[m.art] || 'Meldung'})`);
+    return `<div class="plan">
+      <h4 class="vf-h4">${ic('pin')} Ziel ${esc(p.name)}</h4>
+      <div class="pl-row"><span>Geplant um ${clock(p.t)} Uhr</span><b>${hm(plan / 1000)}</b></div>
+      <div class="pl-bar"><span class="pl-seg plan" style="width:${pc(plan)}"></span></div>
+      <div class="pl-row"><span>Gebraucht</span><b>${hm(ist / 1000)}</b></div>
+      <div class="pl-bar" role="img" aria-label="${esc(`Gebraucht ${hmSay(ist / 1000)}, davon etwa ${hmSay(slow / 1000)} langsam oder im Stau und ${hmSay(amp / 1000)} an Ampeln`)}"><span class="pl-seg" style="width:${pc(flow)}"></span><span class="pl-seg slow" style="width:${pc(slow)}"></span><span class="pl-seg amp" style="width:${pc(amp)}"></span></div>
+      <ul class="pl-legend"><li><span class="lg-dot red"></span>etwa ${Math.round(slow / 60000)} min langsam oder im Stau</li><li><span class="lg-dot"></span>${Math.round(amp / 60000)} min an Ampeln</li></ul>
+      <p class="pl-verdict">${verdict}</p>
+      ${reported.length ? `<p class="small muted">Vorher gemeldet: ${esc(reported.join(', '))}</p>` : ''}
+      ${p.rest > 2 ? `<p class="note">${ic('info')}<span>Die Aufzeichnung endete etwa ${fmtNum(p.rest, 0)} km vor dem Ziel, der Vergleich ist nur grob.</span></p>` : ''}
+    </div>`;
+  }
   const fmtEuro = (x) => x.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 });
   // Kosten einer Autofahrt: Sprit oder Strom (nur mit Verbrauchsangabe) und geschätzte Kosten der Ampelhalte
   function tripCosts(t) {
@@ -938,6 +973,7 @@
           ? `<div class="kpi">${ic('light')}<b>${t.events.filter((e) => e.type === 'halt' && e.signal).length}</b><span>Halte an Ampeln</span></div>`
           : `<div class="kpi">${ic('wave')}<b>${st.steadyShare != null ? fmtPct(st.steadyShare) : '–'}</b><span>gleichmäßig gefahren</span></div>`}
       </div>
+      ${t.plan ? planHtml(t) : ''}
       ${isTransit(t.mode) || (t.transfers || []).length ? transitFacts(t) : ''}
       ${walk ? '' : `<p class="note">${ic('alert')}<span>${st.brakes || 0} starke Bremsung${st.brakes === 1 ? '' : 'en'}${per100}, ${st.accels || 0}× stark beschleunigt.${st.steadyShare == null ? ' Die Gleichmäßigkeit wird ab einer Minute Fahrt über 30 km/h berechnet.' : ''}</span></p>`}
       ${gaps.length ? `<p class="note">${ic('gps')}<span>Ohne GPS-Empfang, etwa im Tunnel: ${fmtDur(gapMs)} min, rund ${fmtNum(gapKm, 1)} km Luftlinie überbrückt. Dort wird nichts gewertet.</span></p>` : ''}
@@ -1745,6 +1781,7 @@
   // ---------- Vor der Fahrt: Lage auf den eigenen Wegen und gespeicherte Ziele, über dem Start-Knopf ----------
   // Ziele liegen nur auf dem Gerät. Geprüft wird nur auf Knopfdruck; der Start geht auf etwa 1 km gerundet an den Server.
   const ZIEL_MAX = 8;
+  let pendingPlan = null;
   let vfOpen = false, zielOpen = null, zielEdit = false, ortList = null, ortQ = '', ortMsg = '';
   const zielRes = {};   // Ziel-ID|Verkehrsmittel → { t, data } | { loading } | { error }
   if (!Array.isArray(settings.ziele)) settings.ziele = [];
@@ -1788,7 +1825,7 @@
       : '<p class="small muted">Nichts gefunden. Versuch es mit Ort und Straße.</p>') : '';
     return `<div class="vf-panel"><form class="vf-form" data-vf="suche"><label class="sr-only" for="inp-ziel">Ziel: Ort oder Adresse</label><input id="inp-ziel" type="search" placeholder="Ort oder Adresse" autocomplete="off" enterkeyhint="search" value="${esc(ortQ)}"><button class="btn" type="submit">Suchen</button></form>
       ${ortMsg ? `<p class="small muted" role="status">${esc(ortMsg)}</p>` : ''}${list}
-      <p class="small muted">${ic('shield')} Für die Prüfung gehen das Ziel und dein ungefährer Standort (auf etwa 1 km gerundet) an den Flowtown-Server und an HERE. Gespeichert wird dort nichts, deine Ziele bleiben auf dem Handy.</p></div>`;
+      <p class="small muted">${ic('shield')} Für die Prüfung gehen das Ziel und dein ungefährer Standort (auf etwa 1 km gerundet) an den Flowtown-Server und an HERE. Gespeichert wird dort nichts, deine Ziele bleiben auf dem Handy. Fährst du mit Ziel los, merkt sich die Fahrt nur dessen Namen und die geplante Zeit.</p></div>`;
   }
   function zielPanel(z, group) {
     if (!z) return '';
@@ -1819,8 +1856,25 @@
         + (best.t && gain >= 300 ? `<p class="tip">${ic('clock')}<span>Um ${clock(best.t)} bist du etwa ${Math.round(gain / 60)} min kürzer unterwegs als jetzt.</span></p>` : '');
     }
     const all = `<button type="button" class="btn quiet" data-peek="l" data-name="${esc(z.name)}" data-art="stau" data-lines="${items.map((it) => it.pts.map((q) => q.join(',')).join(';')).join('|')}" data-arts="${items.map((it) => it.art).join('|')}" data-pts="${route}">${ic('map')}Strecke auf der Karte</button>`;
+    const go = `<button type="button" class="btn primary" data-vf="go">${ic('play')}Fahrt starten mit Ziel</button>`;
     const foot = `<p class="small muted lg-src">Stand ${clock(d.t)} Uhr · ${esc(lageSrc(['HERE'].concat(d.items.some((it) => it.quelle === 'Autobahn GmbH') ? ['Autobahn GmbH'] : [])))} · <button type="button" class="btn-link" data-vf="again">neu prüfen</button></p>`;
-    return `<div class="vf-panel">${head}${sum}${alt}${rows}${bars}${all}${foot}</div>`;
+    return `<div class="vf-panel">${head}${sum}${alt}${rows}${bars}${zielHistory(z)}${go}${all}${foot}</div>`;
+  }
+  // Aus deinen Fahrten: frühere Fahrten zu diesem Ziel, nur angekommene
+  function zielHistory(z) {
+    const mine = trips.filter((t) => t.plan && t.plan.ziel === z.id && !(t.plan.rest > 2));
+    if (!mine.length) return '';
+    const diffs = mine.map((t) => (t.end - t.start) - t.plan.dauer * 1000), avgD = avgOf(diffs);
+    const sign = (ms) => { const m = Math.round(ms / 60000); return m >= 2 ? `${m} min länger als geplant` : m <= -2 ? `${-m} min schneller als geplant` : 'wie geplant'; };
+    let line = mine.length === 1 ? `Einmal gefahren: ${hm((mine[0].end - mine[0].start) / 1000)}, ${sign(diffs[0])}.` : `${mine.length}× gefahren: Ø ${hm(avgOf(mine.map((t) => t.end - t.start)) / 1000)}, im Schnitt ${sign(avgD)}.`;
+    // Muster nach Zeitfenster, erst ab vier Fahrten und zwei im selben Fenster
+    if (mine.length >= 4) {
+      const by = {};
+      mine.forEach((t, i) => (by[timeWindow(t.start)] = by[timeWindow(t.start)] || []).push(diffs[i]));
+      const worst = Object.keys(by).filter((w) => by[w].length >= 2).map((w) => ({ w, d: avgOf(by[w]) })).sort((a, b) => b.d - a.d)[0];
+      if (worst && worst.d - avgD >= 600000) line += ` ${WINDOWS.find((x) => x.id === worst.w).label}: im Schnitt ${Math.round(worst.d / 60000)} min länger als geplant.`;
+    }
+    return `<div class="vf-hist"><h4 class="vf-h4">Aus deinen Fahrten</h4><p class="small">${esc(line)}</p></div>`;
   }
   function myStart() {
     return new Promise((resolve) => {
@@ -1889,6 +1943,16 @@
     else if (act === 'close') { zielOpen = null; zielEdit = false; }
     else if (act === 'edit') zielEdit = !zielEdit;
     else if (act === 'again' && z) { checkZiel(z, true); return; }
+    else if (act === 'go' && z) {
+      const r = zielRes[z.id + '|' + MODE_GROUP[selectedMode()]];
+      if (!r || !r.data) return;
+      const d = r.data;
+      pendingPlan = { ziel: z.id, name: z.name, lat: z.lat, lon: z.lon, t: d.t, dauer: d.abfahrt ? d.abfahrt[0].dauer : d.dauer, basis: d.basis, km: d.km,
+        meldungen: d.items.slice(0, 3).map((it) => ({ titel: it.titel, art: it.art, km: it.km })) };
+      zielOpen = null;
+      startTrip();
+      return;
+    }
     else if (act === 'del' && z) { settings.ziele = settings.ziele.filter((x) => x !== z); store.set('settings', settings); zielOpen = null; zielEdit = false; }
     else return;
     renderVorfahrt();
@@ -2185,7 +2249,7 @@
     return `<li><button type="button" class="trow" data-review="${t.id}">
       <span class="t-time">${time}</span>
       <span class="chip sm">${ic(MODE_ICON[t.mode] || 'route')}</span>
-      <span class="t-main"><b>${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? ' <span class="badge">Demo</span>' : ''}</b><span class="t-sub"><span>${Math.max(1, Math.round(((t.end || t.start) - t.start) / 60000))} min</span> · <span>${fmtNum(t.distance / 1000, 1)} km</span>${trs ? ` · <span>${trs} Umstieg${trs === 1 ? '' : 'e'}</span>` : ''}</span></span>
+      <span class="t-main"><b>${MODES[t.mode] ? MODES[t.mode].label : t.mode}${t.demo ? ' <span class="badge">Demo</span>' : ''}</b><span class="t-sub">${t.plan ? `<span>→ ${esc(t.plan.name)}</span> · ` : ''}<span>${Math.max(1, Math.round(((t.end || t.start) - t.start) / 60000))} min</span> · <span>${fmtNum(t.distance / 1000, 1)} km</span>${trs ? ` · <span>${trs} Umstieg${trs === 1 ? '' : 'e'}</span>` : ''}</span></span>
       <span class="t-pills"><span class="pill${h.length ? ' amber' : ' green'}" title="Halte an Ampeln">${ic('light')}${h.length}</span>${h.length ? `<span class="pill ${wait > 60000 ? 'red' : 'amber'}" title="gewartet">${ic('hourglass')}${fmtDur(wait)}</span>` : ''}</span>
       ${ic('chevron', 't-go')}
     </button></li>`;
