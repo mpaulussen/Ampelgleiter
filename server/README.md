@@ -1,6 +1,6 @@
 # Flowtown-Server
 
-Kleiner Server ohne Abhängigkeiten (Node 18 oder neuer) für fünf Aufgaben:
+Kleiner Server ohne Abhängigkeiten (Node 18 oder neuer) für sechs Aufgaben:
 
 - **Ebene „Wir“**: Die App sendet je Ampel nur Richtung (Achtel), Zeitfenster und Wartezeit. Der Server speichert Summen je Ampel, Richtung und Zeitfenster und zeigt sie erst, wenn mindestens `K_MIN` verschiedene Personen beigetragen haben. Fahrten, Uhrzeiten, Start und Ziel kommen nie an.
 - **KI-Einschätzung**: Die App schickt zusammengefasste Werte (keine Koordinaten), der Server fragt Mistral und gibt Einschätzung und Empfehlungen zurück. Anfragen werden nicht gespeichert, höchstens `KI_PER_DAY` je IP und Tag.
@@ -61,6 +61,28 @@ Autobahn-Meldungen laufen sofort. Für die Stadtstraßen:
 
 Bei 5 Minuten Abstand sind das höchstens knapp 600 HERE-Abfragen am Tag (Fluss und Störungen), egal wie viele Leute die App nutzen. Die aktuellen Freikontingente und Nutzungsbedingungen bitte bei HERE prüfen. Weitere Autobahnen: `LAGE_ROADS=A2,A33,A30`.
 
+### Pilot: Codes vergeben und Fahrten exportieren
+
+Testpersonen bekommen einen Pilot-Code (Form `FT-XXXX-XXXX`). Mit Code und Einwilligung überträgt die App ihre Fahrten pseudonym an den Server (ohne Zielnamen). Der Server speichert nur einen Hash des Codes, nie einen Namen.
+
+Neue Codes erzeugen, hier 5 Stück:
+
+```bash
+sudo bash -c 'set -a; . /etc/flowtown.env; node /opt/flowtown/server/flowtown-server.mjs neue-codes 5' && sudo chown -R flowtown: /var/lib/flowtown
+```
+
+Die Ausgabe (Code und Pseudonym) nur bei dir aufbewahren, etwa in einer Liste mit den Namen. Ein Neustart ist nicht nötig.
+
+Einladungslink für eine Testperson: `https://mpaulussen.github.io/flowtown/?code=FT-XXXX-XXXX`
+
+Alle Pilotfahrten als eine Datei exportieren (für den Ampel-Report):
+
+```bash
+sudo bash -c 'set -a; . /etc/flowtown.env; node /opt/flowtown/server/flowtown-server.mjs export' > pilot-export.json
+```
+
+Die Daten liegen in `/var/lib/flowtown/pilot/`, eine Datei je Code. Testpersonen können ihre Daten in der App unter „Mehr“ → „Pilot“ selbst löschen.
+
 ### Meldungen pflegen
 
 Vorlage: `news.example.json`. Die Datei liegt als `/var/lib/flowtown/news.json` und wird bei jeder Anfrage neu gelesen, ein Neustart ist nicht nötig. `lat`/`lon`/`radius_m` weglassen für Meldungen, die für die ganze Stadt gelten.
@@ -70,4 +92,5 @@ Vorlage: `news.example.json`. Die Datei liegt als `/var/lib/flowtown/news.json` 
 - Mistral: In der Mistral-Konsole prüfen, dass API-Daten nicht zum Training verwendet werden und wie lange Mistral Anfragen aufbewahrt.
 - Vor einer öffentlichen Nutzung braucht die App eine Datenschutzerklärung, die Server, Mistral und die Ebene „Wir“ beschreibt.
 - Verkehrslage: Der Server ruft HERE und die Autobahn-API ohne Daten der Nutzer ab; die App lädt nur das Gesamtbild.
+- Pilot: pseudonym je Code, ohne Zielnamen. Vor dem Pilot die Datenschutzerklärung (`datenschutz.html`, Entwurf) fertigstellen und prüfen lassen.
 - Daten liegen in `/var/lib/flowtown/wir.json`. Löschen setzt die Ebene „Wir“ zurück.

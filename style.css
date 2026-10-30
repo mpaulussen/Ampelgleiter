@@ -454,3 +454,21 @@ body[data-view="drive"] main{padding-bottom:env(safe-area-inset-bottom,0px)}
 #view-map .seg button[aria-pressed="true"]{background:var(--w-map-ink);color:var(--surface)}
 #view-tips .tip{background:var(--w-tip-bg)}
 #view-tips .tip .ic{color:var(--w-tip-ink)}
+/* Einstieg, Hinweis Home-Bildschirm, Pilot */
+body[data-view="welcome"] .tabs{display:none}
+.welcome .consent{border:1px solid var(--line);margin:0}
+.welcome .consent h3,.welcome .pilot-box h3{margin:0}
+.welcome .consent .check{font-weight:700}
+.welcome .consent .small{margin:-10px 0 4px 32px}
+.welcome .pilot-box{background:var(--w-vor-bg);border-color:transparent}
+.welcome .pilot-box h3{color:var(--w-vor-ink)}
+.welcome .pilot-box .field input{background:var(--surface)}
+.welcome a,#view-more a{color:var(--accent);font-weight:700}
+.a2hs{display:flex;align-items:flex-start;gap:8px;background:var(--w-map-bg);color:var(--w-map-ink);border-radius:18px;padding:14px 8px 14px 16px}
+.a2hs-text{flex:1;display:flex;flex-direction:column;gap:6px}
+.a2hs-text span{color:var(--fg);font-size:15px;line-height:1.4}
+.a2hs-text .btn{align-self:flex-start;min-height:44px}
+.a2hs .vf-x{margin:-8px 0 0;color:var(--w-map-ink)}
+#pilot-card .btn{justify-content:flex-start}
+#pilot-card .danger-text{color:var(--bad)}
+h2[tabindex="-1"]:focus{outline:none}

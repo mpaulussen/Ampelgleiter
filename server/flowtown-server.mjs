@@ -515,6 +515,86 @@ const coord = (s, digits) => {
   return v.map((x) => Math.round(x * f) / f);
 };
 
+// ---------- Pilot: Fahrten von Testpersonen, pseudonym über einen Code ----------
+// Codes vergibst du mit „node flowtown-server.mjs neue-codes 5“. Gespeichert wird nur ein Hash des Codes, nie ein Name.
+// Je Code eine Datei mit den Fahrten; Start- und Zielorte enthalten sie nicht, Zielnamen werden entfernt.
+const PILOT_FILE = path.join(DATA_DIR, 'pilot-codes.json');
+const PILOT_DIR = path.join(DATA_DIR, 'pilot');
+const PILOT_MAX_TRIPS = 3000;
+const CODE_ABC = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const pilotAllowed = limiter(Number(process.env.PILOT_PER_DAY || 300));
+const pilotHash = (code) => crypto.createHash('sha256').update(SALT + '|pilot|' + code).digest('hex');
+const normCode = (c) => String(c || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+let pilotCodes = { t: 0, v: {} };
+function knownCode(code) {
+  const c = normCode(code);
+  if (c.length !== 10 || !c.startsWith('FT')) return null;
+  try {   // Datei bei Änderung neu lesen, damit neue Codes ohne Neustart gelten
+    const m = fs.statSync(PILOT_FILE).mtimeMs;
+    if (m !== pilotCodes.t) pilotCodes = { t: m, v: readJson(PILOT_FILE, {}) };
+  } catch (e) { return null; }
+  const h = pilotHash(c);
+  return pilotCodes.v[h] ? h : null;
+}
+const pilotPath = (h) => path.join(PILOT_DIR, h.slice(0, 32) + '.json');
+function readPilot(h) { return readJson(pilotPath(h), { trips: {} }); }
+function writePilot(h, d) {
+  fs.mkdirSync(PILOT_DIR, { recursive: true });
+  const f = pilotPath(h), tmp = f + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(d));
+  fs.renameSync(tmp, f);
+}
+const TRIP_KEYS = ['id', 'mode', 'start', 'end', 'distance', 'events', 'gaps', 'cells', 'stats', 'legs', 'transfers', 'access', 'consumption', 'plan'];
+const TRIP_MODES = new Set(['auto', 'rad', 'bus', 'bahn', 'fuss']);
+function cleanTrip(t) {
+  if (!t || typeof t !== 'object' || typeof t.id !== 'string' || t.id.length > 40 || !TRIP_MODES.has(t.mode) || t.demo) return null;
+  if (!Array.isArray(t.events) || t.events.length > 3000 || !(Number(t.start) > 0)) return null;
+  const o = {};
+  for (const k of TRIP_KEYS) if (t[k] !== undefined) o[k] = t[k];
+  if (o.plan && typeof o.plan === 'object') {   // ohne Zielname und Ziel-Kennung
+    const p = o.plan;
+    o.plan = { dauer: p.dauer, basis: p.basis, km: p.km, t: p.t, rest: p.rest, meldungen: Array.isArray(p.meldungen) ? p.meldungen.slice(0, 5) : [] };
+  }
+  return JSON.stringify(o).length <= 400000 ? o : null;
+}
+function pilotUpload(h, list) {
+  if (!Array.isArray(list) || list.length > 50) throw Object.assign(new Error('Zu viele Fahrten auf einmal'), { status: 400 });
+  const d = readPilot(h);
+  let n = 0;
+  for (const t of list) {
+    const c = cleanTrip(t);
+    if (!c) continue;
+    if (!d.trips[c.id] && Object.keys(d.trips).length >= PILOT_MAX_TRIPS) break;
+    d.trips[c.id] = Object.assign(c, { empfangen: Date.now() });
+    n++;
+  }
+  d.updated = Date.now();
+  writePilot(h, d);
+  return { ok: true, neu: n, n: Object.keys(d.trips).length };
+}
+function newCodes(k) {
+  const v = readJson(PILOT_FILE, {});
+  const out = [];
+  for (let i = 0; i < k; i++) {
+    const b = crypto.randomBytes(8);
+    const body = Array.from(b, (x) => CODE_ABC[x % CODE_ABC.length]).join('');
+    const code = `FT-${body.slice(0, 4)}-${body.slice(4, 8)}`;
+    const h = pilotHash(normCode(code));
+    v[h] = { erstellt: new Date().toISOString() };
+    out.push({ code, pseudonym: h.slice(0, 8) });
+  }
+  fs.writeFileSync(PILOT_FILE, JSON.stringify(v, null, 1));
+  return out;
+}
+function exportPilot() {
+  let files = [];
+  try { files = fs.readdirSync(PILOT_DIR).filter((f) => f.endsWith('.json')); } catch (e) { /* noch keine Daten */ }
+  return { exportiert: new Date().toISOString(), testpersonen: files.map((f) => {
+    const d = readJson(path.join(PILOT_DIR, f), { trips: {} });
+    return { pseudonym: f.slice(0, 8), fahrten: Object.values(d.trips).sort((a, b) => a.start - b.start) };
+  }) };
+}
+
 // ---------- HTTP ----------
 function send(res, status, obj, origin) {
   const h = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Origin' };
@@ -538,7 +618,7 @@ const server = http.createServer(async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   try {
     if (req.method === 'OPTIONS') return send(res, 204, null, origin);
-    if (req.method === 'GET' && p === '/api/health') return send(res, 200, { ok: true, ki: !!MISTRAL_KEY, modell: MISTRAL_MODEL, kMin: K_MIN, lage: { here: !!HERE_KEY, autobahn: LAGE_ROADS }, ziel: !!HERE_KEY }, origin);
+    if (req.method === 'GET' && p === '/api/health') return send(res, 200, { ok: true, ki: !!MISTRAL_KEY, modell: MISTRAL_MODEL, kMin: K_MIN, lage: { here: !!HERE_KEY, autobahn: LAGE_ROADS }, ziel: !!HERE_KEY, pilot: true }, origin);
     if (req.method === 'POST' && p === '/api/wir') return send(res, 200, { ok: true, n: addWir(await readBody(req, 64 * 1024)) }, origin);
     if (req.method === 'GET' && p === '/api/wir') {
       const ids = (url.searchParams.get('s') || '').split(',').filter((s) => /^c\d{1,13}$/.test(s)).slice(0, 400);
@@ -563,6 +643,18 @@ const server = http.createServer(async (req, res) => {
       if (!zielAllowed(ip)) return send(res, 429, { fehler: 'Heute sind keine weiteren Prüfungen möglich.' }, origin);
       return send(res, 200, await checkZiel(from, to, mode), origin);
     }
+    if (req.method === 'POST' && p.startsWith('/api/pilot/')) {
+      if (!pilotAllowed(ip)) return send(res, 429, { fehler: 'Heute sind keine weiteren Übertragungen möglich.' }, origin);
+      const body = await readBody(req, 5 * 1024 * 1024);
+      const h = knownCode(body.code);
+      if (!h) return send(res, 403, { fehler: 'Diesen Pilot-Code kennt der Server nicht.' }, origin);
+      const act = p.slice('/api/pilot/'.length);
+      if (act === 'check') return send(res, 200, { ok: true, n: Object.keys(readPilot(h).trips).length }, origin);
+      if (act === 'upload') return send(res, 200, pilotUpload(h, body.trips), origin);
+      if (act === 'restore') return send(res, 200, { trips: Object.values(readPilot(h).trips).map((t) => { const c = Object.assign({}, t); delete c.empfangen; return c; }) }, origin);
+      if (act === 'delete') { try { fs.unlinkSync(pilotPath(h)); } catch (e) { /* war schon leer */ } return send(res, 200, { ok: true }, origin); }
+      return send(res, 404, { fehler: 'unbekannt' }, origin);
+    }
     if (req.method === 'GET' && p === '/api/news') return send(res, 200, { meldungen: readNews() }, origin);
     return send(res, 404, { fehler: 'unbekannt' }, origin);
   } catch (e) {
@@ -571,4 +663,13 @@ const server = http.createServer(async (req, res) => {
     return send(res, status, { fehler: status >= 500 ? 'Serverfehler' : e.message }, origin);
   }
 });
+// Verwaltung von der Kommandozeile: neue Pilot-Codes, Export aller Pilotfahrten
+const cli = process.argv[2];
+if (cli === 'neue-codes') {
+  for (const c of newCodes(Math.max(1, Math.min(100, Number(process.argv[3]) || 1)))) console.log(`${c.code}   (Pseudonym im Export: ${c.pseudonym})`);
+  console.log('Liste der Codes nur bei dir aufbewahren. Der Server speichert nur einen Hash.');
+  process.exit(0);
+}
+if (cli === 'export') { process.stdout.write(JSON.stringify(exportPilot(), null, 1) + '\n'); process.exit(0); }
+if (cli) { console.error('Unbekannt: ' + cli + '. Möglich: neue-codes <Anzahl>, export'); process.exit(1); }
 server.listen(PORT, HOST, () => console.log(`Flowtown-Server auf ${HOST}:${PORT}, KI ${MISTRAL_KEY ? 'an (' + MISTRAL_MODEL + ')' : 'aus'}, Verkehrslage: Autobahn ${LAGE_ROADS.join('/')}${HERE_KEY ? ' + HERE' : ''}`));

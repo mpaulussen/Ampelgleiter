@@ -69,9 +69,38 @@
 
 <main id="main">
   <p id="app-error" class="msg warn app-error" role="alert" hidden></p>
+  <!-- Einstieg beim ersten Start -->
+  <section id="view-welcome" class="view welcome" hidden aria-labelledby="h-welcome">
+    <span class="st-label"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg>Willkommen bei Flowtown</span>
+    <h2 id="h-welcome" class="st-title">Flowtown misst, wo du an Ampeln wartest.</h2>
+    <p class="st-sub">Damit Bielefeld die Ampeln besser takten kann. Deine Fahrten bleiben auf deinem Handy, außer du erlaubst hier etwas anderes. Alles lässt sich später unter „Mehr“ ändern.</p>
+    <fieldset class="card consent">
+      <legend class="sr-only">Was Flowtown darf</legend>
+      <h3>Was darf Flowtown?</h3>
+      <label class="check"><input type="checkbox" id="w-lage" checked><span>Verkehrslage vor der Fahrt laden</span></label>
+      <p class="small muted">Lädt Stau und Baustellen für ganz Bielefeld. Über dich wird nichts gesendet.</p>
+      <label class="check"><input type="checkbox" id="w-wir"><span>Fahrten anonym beitragen</span></label>
+      <p class="small muted">Je Ampel nur Richtung, Zeitfenster und Wartezeit, damit alle sehen, wo es hakt.</p>
+      <label class="check"><input type="checkbox" id="w-ki"><span>KI-Einschätzung erlauben</span></label>
+      <p class="small muted">Nur auf Knopfdruck, zusammengefasste Werte an Mistral in der EU.</p>
+    </fieldset>
+    <div class="card pilot-box">
+      <h3>Machst du beim Pilot mit?</h3>
+      <label class="field" for="w-code">Pilot-Code (freiwillig)
+        <input id="w-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="FT-XXXX-XXXX">
+      </label>
+      <label class="check"><input type="checkbox" id="w-pilot"><span>Meine Fahrten für den Pilot übertragen</span></label>
+      <p class="small muted">Mit Code gehen deine Fahrten pseudonym an den Flowtown-Server: Halte an Ampeln, Zeiten, Strecke im 150-m-Raster, Bewertungen. Kein Name, keine Start- und Zielorte. Du kannst sie jederzeit löschen.</p>
+    </div>
+    <p class="small"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung lesen</a></p>
+    <p id="welcome-msg" class="msg" role="status" aria-live="polite"></p>
+    <button id="btn-welcome" class="btn primary big go" type="button">Los geht’s</button>
+  </section>
+
   <!-- Fahren -->
   <section id="view-start" class="view" aria-labelledby="h-start">
     <p class="hello-date" id="today-date"></p>
+    <div id="a2hs" class="a2hs" hidden></div>
     <div id="status" class="status ok">
       <span class="st-label" id="st-label"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span id="st-label-text">Vor der Fahrt</span></span>
       <h2 id="h-start" class="st-title" aria-live="polite">Heute unterwegs</h2>
@@ -209,6 +238,7 @@
         <label class="btn file-btn"><svg class="ic" aria-hidden="true"><use href="#i-upload"/></svg>Daten importieren<input id="inp-import" type="file" accept="application/json,.json"></label>
       </div>
     </div>
+    <div class="card" id="pilot-card"></div>
     <div class="card">
       <div class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-cloud"/></svg></span><h3>Flowtown-Server</h3></div>
       <label class="field" for="inp-server">Adresse des Servers
@@ -266,6 +296,7 @@
         <button id="btn-wipe-no" class="btn" type="button">Abbrechen</button>
       </div>
     </div>
+    <p class="small"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a></p>
     <p class="small muted">Ampelstandorte: © OpenStreetMap-Mitwirkende. Prototyp, Version <span id="app-version"></span>.</p>
     <p id="more-msg" class="msg" role="status" aria-live="polite"></p>
   </section>

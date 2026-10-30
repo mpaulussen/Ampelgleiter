@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Datenschutz · Flowtown</title>
+<meta name="theme-color" content="#f7f7f5">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{background:#f7f7f5}
+  .doc{max-width:720px;margin:0 auto;padding:20px max(16px,env(safe-area-inset-right,0px)) 48px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:14px;line-height:1.55}
+  .doc h1{font-size:30px;line-height:1.15;margin:8px 0 0}
+  .doc h2{font-size:21px;margin:18px 0 0}
+  .doc h3{font-size:17px;margin:8px 0 0}
+  .doc ul{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:4px}
+  .doc .draft{background:var(--amber-tint);color:#4a3000;border-radius:14px;padding:12px 14px}
+  .doc .todo{background:#fff0d1;border-radius:4px;padding:0 4px}
+  .doc a{color:var(--accent);font-weight:700}
+</style>
+</head>
+<body>
+<header class="top">
+  <svg class="logo" viewBox="0 0 40 14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="#D64933"/><circle cx="20" cy="7" r="5" fill="#F2B33D"/><circle cx="33" cy="7" r="5" fill="#2FA36B"/></svg>
+  <span style="font-size:19px;font-weight:700">Flowtown</span>
+</header>
+<main class="doc">
+  <p class="draft"><b>Entwurf, Stand 30. Oktober 2026.</b> Vor der Veröffentlichung rechtlich prüfen lassen. Gelb markierte Stellen sind noch auszufüllen oder zu prüfen.</p>
+  <h1>Datenschutzerklärung</h1>
+  <p>Flowtown misst, wo Menschen an Ampeln warten, damit Bielefeld die Ampeln besser takten kann. Grundsatz: Deine Fahrten bleiben auf deinem Handy. Was die App an andere schickt, geschieht nur, wenn du es erlaubst, und ist hier vollständig beschrieben.</p>
+
+  <h2>1. Verantwortlich</h2>
+  <p>Dr. Markus Paulußen, barrierefrAI, <span class="todo">[Anschrift]</span>, E-Mail: <span class="todo">[E-Mail-Adresse]</span>.</p>
+
+  <h2>2. Was auf deinem Handy gespeichert wird</h2>
+  <p>Die App speichert im Speicher deines Browsers bzw. der installierten App:</p>
+  <ul>
+    <li>deine Fahrten: Ampeln, an denen du gehalten hast oder durchgefahren bist (Ort der Ampel, Uhrzeit, Wartezeit, Richtung), Zeit und Tempo je Feld eines 150-m-Rasters, Strecke, Fahrweise, Umstiege, deine Bewertungen und Stichworte, freiwillig der Verbrauch;</li>
+    <li>deine Einstellungen und gespeicherte Ziele (Name und Koordinaten, die du selbst eingibst);</li>
+    <li>zwischengespeicherte Ampelstandorte und Straßennamen aus OpenStreetMap.</li>
+  </ul>
+  <p>Dein Standort (GPS) wird nur während einer Aufzeichnung verwendet und nur auf dem Handy ausgewertet. Start- und Zielort einer Fahrt werden nicht gespeichert; Ereignisse in der Nähe von Start und Ziel verwirft die App (Standard: 200 m, einstellbar unter „Mehr“). Startest du eine Fahrt mit Ziel, merkt sich die Fahrt den Namen des Ziels, die geplante Zeit und am Ende den Abstand zum Ziel.</p>
+  <p>Diese Speicherung ist für die Funktion der App unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG). Du kannst alles unter „Mehr“ exportieren und löschen.</p>
+
+  <h2>3. Aufruf der App</h2>
+  <p>Die App wird über GitHub Pages ausgeliefert (GitHub Inc., USA). Beim Aufruf verarbeitet GitHub technisch notwendige Daten wie deine IP-Adresse. Rechtsgrundlage ist unser berechtigtes Interesse an einer sicheren Bereitstellung (Art. 6 Abs. 1 lit. f DSGVO). <span class="todo">[Übermittlung in die USA prüfen: EU-US Data Privacy Framework der GitHub Inc.; alternativ Umzug auf einen Server in der EU]</span></p>
+  <p>Die Schrift ist in der App enthalten; es werden keine Schriften von Google oder anderen geladen.</p>
+
+  <h2>4. Karte, Ampelstandorte und Straßennamen</h2>
+  <ul>
+    <li><b>Kartenbilder</b> lädt die App von tile.openstreetmap.org (OpenStreetMap Foundation, Vereinigtes Königreich). Dabei werden deine IP-Adresse und der angezeigte Kartenausschnitt übertragen.</li>
+    <li><b>Ampelstandorte</b> fragt die App bei der Overpass-API ab (overpass-api.de, ersatzweise overpass.kumi.systems). Übertragen werden dein Standort zu Beginn der Fahrt, als Mittelpunkt eines Umkreises von 5 km, und deine IP-Adresse.</li>
+    <li><b>Straßennamen</b> fragt die App bei der Overpass-API und bei Nominatim ab (nominatim.openstreetmap.org, OpenStreetMap Foundation). Übertragen werden die Koordinaten von Ampeln, an denen du warst, und deine IP-Adresse.</li>
+  </ul>
+  <p>Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO: Ohne diese Abfragen kann die App Ampeln nicht erkennen und nicht benennen. Für das Vereinigte Königreich besteht ein Angemessenheitsbeschluss der EU-Kommission. <span class="todo">[Betreiber von overpass.kumi.systems prüfen]</span></p>
+
+  <h2>5. Flowtown-Server</h2>
+  <p>Der Flowtown-Server läuft bei der Hetzner Online GmbH in <span class="todo">[Rechenzentrum: Deutschland / Finnland]</span>. Er protokolliert technisch Zugriffe mit IP-Adresse <span class="todo">[Speicherdauer der Server-Protokolle, z. B. 7 Tage]</span>. Über den Server laufen nur die folgenden Funktionen, und jede davon ist einzeln abschaltbar.</p>
+  <h3>5.1 Verkehrslage vor der Fahrt</h3>
+  <p>Die App lädt vom Server die Lage für ganz Bielefeld und prüft auf dem Handy, was deine Wege betrifft. Der Server holt die Lage bei HERE Global B.V. (Niederlande) und der Autobahn GmbH des Bundes, ohne Daten über dich. Rechtsgrundlage: Einwilligung (Art. 6 Abs. 1 lit. a DSGVO).</p>
+  <h3>5.2 Ziel prüfen</h3>
+  <p>Wenn du ein Ziel prüfst, gehen das Ziel und dein Standort, auf etwa 1 km gerundet, an den Server und von dort an HERE Global B.V. (Niederlande), um Strecke, Fahrzeit und Meldungen zu berechnen. Bei der Ortssuche geht dein Suchtext an HERE. Der Server speichert die Anfrage höchstens 3 Minuten zwischen, um doppelte Abfragen zu vermeiden. Rechtsgrundlage: Einwilligung, die du mit dem Antippen erteilst (Art. 6 Abs. 1 lit. a DSGVO).</p>
+  <h3>5.3 Fahrten anonym beitragen (Ebene „Wir“)</h3>
+  <p>Wenn du das erlaubst, sendet die App je Ampel nur Richtung, Zeitfenster (etwa „werktags 6 bis 9 Uhr“), Wartezeit und eine zufällige Geräte-Kennung. Keine Uhrzeiten, kein Start, kein Ziel. Der Server speichert nur Summen je Ampel, Richtung und Zeitfenster und die Kennung verschlüsselt (gehasht). Werte erscheinen für andere erst, wenn mindestens fünf Personen beigetragen haben. Rechtsgrundlage: Einwilligung (Art. 6 Abs. 1 lit. a DSGVO).</p>
+  <h3>5.4 KI-Einschätzung</h3>
+  <p>Auf Knopfdruck sendet die App zusammengefasste Werte (etwa Wartezeiten, Ampelnamen, Zeitfenster, keine Koordinaten) über den Server an Mistral AI SAS (Frankreich). Der Flowtown-Server speichert weder Anfrage noch Antwort. <span class="todo">[Prüfen und eintragen: Nutzung der API-Daten durch Mistral zu Trainingszwecken ausgeschlossen; Aufbewahrungsdauer bei Mistral]</span> Rechtsgrundlage: Einwilligung (Art. 6 Abs. 1 lit. a DSGVO).</p>
+  <h3>5.5 Pilot mit Code</h3>
+  <p>Wenn du einen Pilot-Code einträgst und zustimmst, überträgt die App deine Fahrten an den Server: die unter 2. genannten Fahrtdaten ohne Zielnamen. Gespeichert werden sie unter einer verschlüsselten Form deines Codes, ohne Namen oder E-Mail-Adresse (pseudonym). Wem welcher Code gehört, weiß nur der Verantwortliche. Die Daten dienen der Auswertung im Pilot, insbesondere dem Ampel-Report für die Stadt Bielefeld, der nur zusammengefasste Werte enthält. Sie werden gelöscht, wenn du es unter „Mehr“ → „Pilot“ veranlasst, spätestens <span class="todo">[Datum, z. B. drei Monate nach Ende des Pilots]</span>. Rechtsgrundlage: Einwilligung (Art. 6 Abs. 1 lit. a DSGVO).</p>
+
+  <h2>6. Deine Rechte</h2>
+  <p>Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit (unter „Mehr“ als Export) und Widerspruch (Art. 15 bis 21 DSGVO). Eine Einwilligung kannst du jederzeit mit Wirkung für die Zukunft widerrufen, indem du die Funktion unter „Mehr“ abschaltest oder uns schreibst. Du kannst dich bei einer Aufsichtsbehörde beschweren, etwa bei der Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen.</p>
+
+  <h2>7. Keine Werbung, kein Verkauf</h2>
+  <p>Flowtown enthält keine Werbung und keine Analyse- oder Tracking-Dienste. Daten werden nicht verkauft.</p>
+  <p><a href="./">Zurück zur App</a></p>
+</main>
+</body>
+</html>

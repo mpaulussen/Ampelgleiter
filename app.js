@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.20.2';
+  const VERSION = '0.21.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -32,6 +32,7 @@
   const ACC_TAGS = ['Grün zu kurz zum Queren', 'kein Tonsignal', 'Taster schlecht erreichbar', 'Bordstein zu hoch'];   // Profil barrierefrei
   const ACCESS_LABEL = { rollstuhl: 'Rollstuhl', rollator: 'Rollator oder langsames Gehen', sehen: 'Sehbehinderung', andere: 'andere Einschränkung' };
   // Zu Fuß ist man einen Weg gegangen, nicht gefahren
+  const DEFAULT_SERVER = 'https://songdeepdive.de/flowtown-api';
   const WORDS = {
     fahrt: { one: 'Fahrt', many: 'Fahrten', none: 'Noch keine Fahrt', start: 'Losfahren', end: 'Fahrt beenden', cont: 'Weiterfahren', time: 'Fahrzeit',
       past: 'gefahren', bilanz: 'Fahrtbilanz', last: 'Letzte Fahrt', review: 'Wie war deine Fahrt?', short: 'Die Fahrt war zu kurz und wurde nicht gespeichert.',
@@ -77,7 +78,8 @@
     set(k, v) { try { localStorage.setItem('ww.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   };
   let trips = store.get('trips', []);
-  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35, access: { on: false, type: 'rollator' }, server: { url: '', wir: false, ki: false } }, store.get('settings', {}));
+  let settings = Object.assign({ mode: 'auto', cut: 200, fuelPrice: 1.75, powerPrice: 0.35, access: { on: false, type: 'rollator' }, server: { url: DEFAULT_SERVER, wir: false, ki: false } }, store.get('settings', {}));
+  if (!settings.serverDefault) { if (!settings.server.url) settings.server.url = DEFAULT_SERVER; settings.serverDefault = true; }   // ab 0.21: Server ist voreingestellt
   let signalCache = store.get('signals', { areas: [], nodes: {} });
   // Haltestellen ab 0.9.0, Angaben zur Barrierefreiheit ab 0.10.0: Gebiete einmal neu laden
   // Haltestellennamen ab 0.12.0 (Umstiege)
@@ -849,6 +851,7 @@
     trips.push(trip);
     saveTrips();
     flushWir(trip);
+    syncPilot();
     openReview(trip);
   }
 
@@ -1081,7 +1084,7 @@
     const again = $(`#review-list .rev[data-idx="${card.dataset.idx}"] button[data-${btn.dataset.rate ? 'rate' : 'tag'}="${btn.dataset.rate || btn.dataset.tag}"]`);
     if (again) again.focus();
   });
-  $('#btn-review-done').addEventListener('click', () => { reviewTrip = null; showView('stats'); });
+  $('#btn-review-done').addEventListener('click', () => { reviewTrip = null; showView('stats'); syncPilot(); });
   $('#btn-review-delete').addEventListener('click', () => {
     const b = $('#btn-review-delete');
     if (!reviewTrip) return;
@@ -1522,7 +1525,8 @@
     if (name === 'tips') renderTips();
     if (name === 'map') renderMap();
     if (name === 'start') { renderToday(); renderLastTrip(); }
-    if (name === 'more') updateSignalsInfo();
+    if (name === 'more') { updateSignalsInfo(); renderPilotCard(); }
+    if (name === 'start') renderA2hs();
     const h = $('#view-' + name + ' h2');
     if (h && name !== 'drive') { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
     window.scrollTo(0, 0);
@@ -2329,6 +2333,157 @@
     $('#hints').open = !trips.some((x) => !x.demo);   // Hinweise nur offen, solange es noch keine Fahrt gibt
   }
 
+  // ---------- Pilot: Fahrten pseudonym auf den Server, mit Code ----------
+  const normCode = (c) => String(c || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  const showCode = (c) => { const n = normCode(c); return n.length === 10 ? `${n.slice(0, 2)}-${n.slice(2, 6)}-${n.slice(6)}` : n; };
+  const pilotOn = () => !!(settings.pilot && settings.pilot.code) && !!apiBase();
+  // einfacher Fingerabdruck einer Fahrt: geänderte Fahrten (etwa neue Bewertungen) gehen erneut raus
+  const tripHash = (t) => { const s = JSON.stringify(t); let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return s.length + ':' + h; };
+  let pilotBusy = false;
+  async function syncPilot() {
+    if (!pilotOn() || pilotBusy || !navigator.onLine) return;
+    const sent = store.get('pilotSent', {});
+    const todo = trips.filter((t) => !t.demo && sent[t.id] !== tripHash(t));
+    if (!todo.length) return;
+    pilotBusy = true;
+    try {
+      for (let i = 0; i < todo.length; i += 20) {
+        const part = todo.slice(i, i + 20);
+        const r = await postJson('/api/pilot/upload', { code: settings.pilot.code, trips: part });
+        part.forEach((t) => { sent[t.id] = tripHash(t); });
+        store.set('pilotSent', sent);
+        Object.assign(settings.pilot, { last: Date.now(), n: r.n, error: '' });
+        store.set('settings', settings);
+      }
+    } catch (e) {
+      settings.pilot.error = e.message === 'Failed to fetch' ? 'Keine Verbindung, nächster Versuch beim nächsten Öffnen.' : e.message;
+      store.set('settings', settings);
+    } finally { pilotBusy = false; }
+    if (!$('#view-more').hidden) renderPilotCard();
+  }
+  // Code prüfen und verbinden; liegen schon Fahrten auf dem Server und keine auf dem Handy, werden sie geholt
+  async function connectPilot(code, consent) {
+    const c = normCode(code);
+    if (c.length !== 10 || !c.startsWith('FT')) throw new Error('Der Code hat die Form FT-XXXX-XXXX.');
+    if (!consent) throw new Error('Bitte bestätige, dass deine Fahrten für den Pilot übertragen werden dürfen.');
+    if (!apiBase()) throw new Error('Unter „Mehr“ fehlt die Adresse des Servers.');
+    const r = await postJson('/api/pilot/check', { code: c });
+    settings.pilot = { code: c, since: Date.now(), n: r.n, last: 0, error: '' };
+    store.set('settings', settings);
+    store.set('pilotSent', {});
+    let restored = 0;
+    if (r.n && !trips.some((t) => !t.demo)) restored = await restorePilot();
+    syncPilot();
+    return { onServer: r.n, restored };
+  }
+  async function restorePilot() {
+    const r = await postJson('/api/pilot/restore', { code: settings.pilot.code });
+    const sent = store.get('pilotSent', {});
+    let added = 0;
+    for (const t of r.trips || []) {
+      if (trips.some((x) => x.id === t.id)) continue;
+      trips.push(t); sent[t.id] = tripHash(t); added++;
+    }
+    trips.sort((a, b) => a.start - b.start);
+    saveTrips(); store.set('pilotSent', sent);
+    return added;
+  }
+  function renderPilotCard() {
+    const el = $('#pilot-card');
+    const head = cardHead('flask', 'Pilot', settings.pilot ? 'Code ' + esc(showCode(settings.pilot.code).replace(/-\w{4}$/, '-····')) : 'Mit Code dabei sein');
+    if (!settings.pilot) {
+      el.innerHTML = `${head}<label class="field" for="m-code">Pilot-Code<input id="m-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="FT-XXXX-XXXX"></label>
+        <label class="check"><input type="checkbox" id="m-pilot"><span>Meine Fahrten für den Pilot übertragen</span></label>
+        <p class="small muted">Pseudonym: Halte an Ampeln, Zeiten, Strecke im 150-m-Raster, Bewertungen. Kein Name, keine Start- und Zielorte.</p>
+        <button type="button" class="btn" data-pilot="connect">${ic('check')}Code verbinden</button><p class="small" id="pilot-msg" role="status" aria-live="polite"></p>`;
+      return;
+    }
+    const p = settings.pilot;
+    const state = p.error ? `<p class="small">${ic('alert')} ${esc(p.error)}</p>`
+      : `<p class="small muted">${p.n || 0} Fahrt${p.n === 1 ? '' : 'en'} auf dem Server${p.last ? ' · zuletzt übertragen ' + new Date(p.last).toLocaleString('de-DE', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' Uhr' : ''}</p>`;
+    el.innerHTML = `${head}${state}
+      <div class="btn-col">
+        <button type="button" class="btn" data-pilot="sync">${ic('upload')}Jetzt übertragen</button>
+        <button type="button" class="btn" data-pilot="restore">${ic('download')}Fahrten vom Server holen</button>
+        <button type="button" class="btn danger-text" data-pilot="delete"${p.armDelete ? ' data-armed="1"' : ''}>${ic('trash')}${p.armDelete ? 'Wirklich alles auf dem Server löschen?' : 'Meine Pilot-Daten auf dem Server löschen'}</button>
+        <button type="button" class="btn quiet" data-pilot="leave">Code von diesem Handy entfernen</button>
+      </div><p class="small" id="pilot-msg" role="status" aria-live="polite"></p>`;
+  }
+  $('#pilot-card').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-pilot]');
+    if (!b) return;
+    const msg = (t) => { const m = $('#pilot-msg'); if (m) m.textContent = t; };
+    const act = b.dataset.pilot;
+    try {
+      if (act === 'connect') {
+        msg('Code wird geprüft …');
+        const r = await connectPilot($('#m-code').value, $('#m-pilot').checked);
+        renderPilotCard();
+        msg(r.restored ? `Verbunden. ${r.restored} Fahrten vom Server geholt.` : 'Verbunden. Deine Fahrten werden übertragen.');
+      } else if (act === 'sync') {
+        store.set('pilotSent', {}); msg('Wird übertragen …'); await syncPilot(); renderPilotCard(); msg(settings.pilot.error || 'Übertragen.');
+      } else if (act === 'restore') {
+        msg('Wird geholt …'); const n = await restorePilot(); renderPilotCard(); msg(n ? `${n} Fahrten vom Server ergänzt.` : 'Alle Fahrten vom Server sind schon auf dem Handy.');
+      } else if (act === 'delete') {
+        if (!settings.pilot.armDelete) { settings.pilot.armDelete = true; renderPilotCard(); return; }
+        await postJson('/api/pilot/delete', { code: settings.pilot.code });
+        settings.pilot = null; store.set('settings', settings); store.set('pilotSent', {});
+        renderPilotCard(); msg('Deine Pilot-Daten auf dem Server sind gelöscht. Auf dem Handy bleibt alles.');
+      } else if (act === 'leave') {
+        settings.pilot = null; store.set('settings', settings); store.set('pilotSent', {});
+        renderPilotCard(); msg('Code entfernt. Auf dem Server bleibt, was schon übertragen ist.');
+      }
+    } catch (e) { msg(e.message === 'Failed to fetch' ? 'Keine Verbindung zum Server.' : e.message); }
+  });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') syncPilot(); });
+
+  // ---------- Einstieg beim ersten Start ----------
+  function openWelcome() {
+    $('#w-lage').checked = settings.server.lage !== false;
+    $('#w-wir').checked = !!settings.server.wir;
+    $('#w-ki').checked = !!settings.server.ki;
+    const code = new URLSearchParams(location.search).get('code');   // Einladungslink: …/flowtown/?code=FT-XXXX-XXXX
+    if (code) { $('#w-code').value = showCode(code); history.replaceState(null, '', location.pathname); }
+    showView('welcome');
+  }
+  $('#btn-welcome').addEventListener('click', async () => {
+    const msg = $('#welcome-msg');
+    Object.assign(settings.server, { lage: $('#w-lage').checked, wir: $('#w-wir').checked, ki: $('#w-ki').checked });
+    $('#inp-wir').checked = settings.server.wir; $('#inp-ki').checked = settings.server.ki; $('#inp-lage').checked = settings.server.lage;
+    const code = $('#w-code').value.trim();
+    if (code) {
+      msg.textContent = 'Code wird geprüft …';
+      try {
+        const r = await connectPilot(code, $('#w-pilot').checked);
+        msg.textContent = r.restored ? `${r.restored} Fahrten vom Server geholt.` : '';
+      } catch (e) { msg.textContent = e.message === 'Failed to fetch' ? 'Keine Verbindung zum Server. Den Code kannst du später unter „Mehr“ eintragen.' : e.message; return; }
+    }
+    settings.onboarded = VERSION;
+    store.set('settings', settings);
+    showView('start');
+  });
+
+  // ---------- Hinweis: zum Home-Bildschirm hinzufügen ----------
+  // Im Browser-Tab löscht Safari Daten von Seiten, die 7 Tage nicht geöffnet wurden; die installierte App ist davon ausgenommen
+  const standalone = () => window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  let installEvt = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; renderA2hs(); });
+  function renderA2hs() {
+    const el = $('#a2hs');
+    if (standalone() || settings.a2hsHide) { el.hidden = true; return; }
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    el.hidden = false;
+    el.innerHTML = `<div class="a2hs-text"><b>Als App auf den Home-Bildschirm</b><span>${ios ? 'In Safari auf Teilen tippen, dann „Zum Home-Bildschirm“.' : installEvt ? 'Dann startet Flowtown wie eine App.' : 'Im Browser-Menü „Zum Startbildschirm hinzufügen“ wählen.'} Im Browser-Tab können deine Fahrten sonst nach einiger Zeit verloren gehen.</span>${installEvt ? `<button type="button" class="btn" data-a2hs="install">${ic('download')}Installieren</button>` : ''}</div>
+      <button type="button" class="vf-x" data-a2hs="hide" aria-label="Hinweis ausblenden">${ic('x')}</button>`;
+  }
+  $('#a2hs').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-a2hs]');
+    if (!b) return;
+    if (b.dataset.a2hs === 'install' && installEvt) { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; }
+    else { settings.a2hsHide = true; store.set('settings', settings); }
+    renderA2hs();
+  });
+
   // ---------- Ereignisse ----------
   $('#btn-start').addEventListener('click', startTrip);
   $('#tips-body').addEventListener('click', (ev) => { if (ev.target.closest('#btn-ki')) runKi(); });
@@ -2434,6 +2589,9 @@
   updateSignalsInfo();
   renderToday();
   renderLastTrip();
+  renderA2hs();
+  if (!settings.onboarded || new URLSearchParams(location.search).get('code')) openWelcome();
+  syncPilot();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
     // neue Version übernommen: einmal neu laden, damit sie sofort sichtbar ist (nie während einer Aufzeichnung)
