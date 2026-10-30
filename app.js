@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.17.0';
+  const VERSION = '0.18.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1244,12 +1244,13 @@
     const parse = (str) => (str || '').split(';').map((s) => s.split(',').map(Number)).filter((p) => isFinite(p[0]) && isFinite(p[1]));
     const kind = btn.dataset.peek;
     const pts = kind === 'r' ? parse(btn.dataset.pts) : kind === 'l' ? [] : [[Number(btn.dataset.lat), Number(btn.dataset.lon)]];
-    const parts = kind === 'l' ? (btn.dataset.lines || '').split('|').map(parse).filter((x) => x.length) : [];
+    const arts = (btn.dataset.arts || '').split('|');
+    const parts = kind === 'l' ? (btn.dataset.lines || '').split('|').map((x, i) => Object.assign(parse(x), { art: arts[i] || btn.dataset.art })).filter((x) => x.length) : [];
     const route = kind === 'l' ? parse(btn.dataset.pts) : [];
     $('#peek-meta').textContent = kind === 'r' ? `${pts.length} Ampeln auf diesem Weg · grün: erste, rot: letzte Ampel`
-      : kind === 'l' ? `${LAGE_LABEL[btn.dataset.art] || 'Meldung'} · farbig: betroffener Abschnitt, grün gestrichelt: dein Weg` : 'Ampel, an der du gewartet hast';
+      : kind === 'l' ? (btn.dataset.arts != null ? `Strecke · ${parts.length ? 'rot und gelb: Meldungen' : 'keine Meldungen'}` : `${LAGE_LABEL[btn.dataset.art] || 'Meldung'} · farbig: betroffener Abschnitt, grün gestrichelt: dein Weg`) : 'Ampel, an der du gewartet hast';
     if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
-    if (typeof L === 'undefined' || !(pts.length || parts.length)) { $('#peek-meta').textContent = 'Die Karte braucht eine Internetverbindung.'; return; }
+    if (typeof L === 'undefined' || !(pts.length || parts.length || route.length)) { $('#peek-meta').textContent = 'Die Karte braucht eine Internetverbindung.'; return; }
     if (!peekMap) {
       peekMap = L.map('peek-map', { zoomControl: true, attributionControl: true });
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap-Mitwirkende' }).addTo(peekMap);
@@ -1258,10 +1259,13 @@
     peekLayer = L.layerGroup().addTo(peekMap);
     const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1a7f52';
     if (kind === 'l') {
-      const col = LAGE_CLS[btn.dataset.art] === 'red' ? '#d64933' : '#e0a326';
-      if (route.length > 1) L.polyline(route, { color: accent, weight: 3, opacity: 0.6, dashArray: '6 6' }).addTo(peekLayer);
-      for (const p of parts) if (p.length > 1) L.polyline(p, { color: col, weight: 7, opacity: 0.9 }).addTo(peekLayer); else L.circleMarker(p[0], { radius: 9, color: '#ffffff', weight: 2, fillColor: col, fillOpacity: 1 }).addTo(peekLayer);
-      const all = [].concat(...parts);
+      const whole = btn.dataset.arts != null;   // ganze Strecke eines Ziels
+      if (route.length > 1) L.polyline(route, whole ? { color: accent, weight: 5, opacity: 0.8 } : { color: accent, weight: 3, opacity: 0.6, dashArray: '6 6' }).addTo(peekLayer);
+      for (const p of parts) {
+        const col = LAGE_CLS[p.art] === 'red' ? '#d64933' : '#e0a326';
+        if (p.length > 1) L.polyline(p, { color: col, weight: 7, opacity: 0.9 }).addTo(peekLayer); else L.circleMarker(p[0], { radius: 9, color: '#ffffff', weight: 2, fillColor: col, fillOpacity: 1 }).addTo(peekLayer);
+      }
+      const all = whole || !parts.length ? route : [].concat(...parts);
       setTimeout(() => { peekMap.invalidateSize(); if (all.length > 1) peekMap.fitBounds(all, { padding: [40, 40], maxZoom: 16 }); else peekMap.setView(all[0], 15); }, 60);
       return;
     }
@@ -1273,7 +1277,7 @@
     }, 60);
   }
   document.addEventListener('click', (ev) => {
-    const b = ev.target.closest('button.place');
+    const b = ev.target.closest('button.place, button[data-peek]');
     if (b) { ev.preventDefault(); ev.stopPropagation(); openPeek(b); }
   }, true);
   function renderMap() {
@@ -1577,12 +1581,11 @@
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
       : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small muted">Ab zwei Fahrten auf derselben Strecke zeigt Flowtown hier deinen Weg und die beste Abfahrtszeit.</p></div>`];
     const top = computeTips()[0];
-    const lc = lageCard(group);
     if (top) html.unshift(`<button type="button" class="card top-tip" data-goto="tips"><span class="chip amber">${ic('bulb')}</span><span class="tt-text"><span class="meta">Dein Tipp</span>${top.short}</span>${ic('chevron', 'tt-go')}</button>`);
-    if (lc) html.unshift(lc);
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
     $('#today').innerHTML = html.join('');
+    renderVorfahrt();
     if (lageOn() && Date.now() - lageAt >= 300000) loadLage().then((ok) => { if (ok && !$('#view-start').hidden) renderToday(); });
   }
 
@@ -1734,21 +1737,170 @@
     return { lines, hits, total: items.length };
   }
   const lageBtn = (h) => `<button type="button" class="place" data-peek="l" data-name="${esc(h.titel)}" data-art="${h.art}" data-lines="${h.parts.map((p) => p.map((q) => q.join(',')).join(';')).join('|')}" data-pts="${h.line.pts.map((e) => `${e.lat},${e.lon}`).join(';')}">${esc(h.titel)}</button>`;
-  function lageCard(group) {
-    if (!lageOn() || !lageCache) return '';
-    const { lines, hits, total } = myLage(group);
-    const stand = new Date(lageCache.t || Date.now()).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-    const src = (lageCache.quellen || []).map((q) => (q.name === 'HERE' ? '© HERE' : q.name === 'Autobahn GmbH' ? 'Autobahn GmbH des Bundes' : q.name)).join(', ');
-    const foot = `<p class="small muted lg-src">Stand ${stand} Uhr${src ? ' · ' + esc(src) : ''}</p>`;
-    if (!lines.length) return `<div class="card">${cardHead('alert', 'Vor der Fahrt', '', 'amber')}<p class="small muted">Nach den ersten Fahrten prüft Flowtown hier, ob es auf deinen Wegen Stau, Baustellen oder Sperrungen gibt.${total ? ` In Bielefeld gibt es gerade ${total} Meldung${total === 1 ? '' : 'en'}.` : ''}</p>${foot}</div>`;
-    if (!hits.length) return `<div class="card lage ok"><div class="lg-ok">${ic('check')}<span><b>Vor der Fahrt:</b> keine Meldungen auf deinen Wegen</span></div>${foot}</div>`;
-    const rows = hits.slice(0, 4).map((h) => {
-      const sub = [LAGE_LABEL[h.art], h.delay >= 30 ? `etwa +${Math.max(1, Math.round(h.delay / 60))} min` : '', h.richtungText, lines.length > 1 ? 'auf ' + h.line.name : ''].filter(Boolean).map(esc).join(' · ');
-      return `<li class="lg ${LAGE_CLS[h.art]}"><span class="lg-dot" aria-hidden="true"></span><div><b>${lageBtn(h)}</b><span class="small muted">${sub}</span>${h.texts[0] && h.art !== 'zaeh' ? `<span class="small lg-text">${esc(h.texts[0])}</span>` : ''}</div></li>`;
-    }).join('');
-    const more = hits.length > 4 ? `<p class="small muted">und ${hits.length - 4} weitere</p>` : '';
-    return `<div class="card lage">${cardHead('alert', 'Vor der Fahrt', 'Auf deinen Wegen', hits.some((h) => LAGE_CLS[h.art] === 'red') ? 'bad' : 'amber')}<ul class="lg-list">${rows}</ul>${more}${foot}</div>`;
+  const lageSrc = (quellen) => (quellen || []).map((q) => (q === 'HERE' ? '© HERE' : q === 'Autobahn GmbH' ? 'Autobahn GmbH des Bundes' : q)).join(', ');
+  const clock = (t) => new Date(t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const delayText = (s) => (s >= 30 ? `etwa +${Math.max(1, Math.round(s / 60))} min` : '');
+  const lageRow = (art, btn, sub, text) => `<li class="lg ${LAGE_CLS[art]}"><span class="lg-dot" aria-hidden="true"></span><div><b>${btn}</b><span class="small muted">${sub}</span>${text ? `<span class="small lg-text">${esc(text)}</span>` : ''}</div></li>`;
+
+  // ---------- Vor der Fahrt: Lage auf den eigenen Wegen und gespeicherte Ziele, über dem Start-Knopf ----------
+  // Ziele liegen nur auf dem Gerät. Geprüft wird nur auf Knopfdruck; der Start geht auf etwa 1 km gerundet an den Server.
+  const ZIEL_MAX = 8;
+  let vfOpen = false, zielOpen = null, zielEdit = false, ortList = null, ortQ = '', ortMsg = '';
+  const zielRes = {};   // Ziel-ID|Verkehrsmittel → { t, data } | { loading } | { error }
+  if (!Array.isArray(settings.ziele)) settings.ziele = [];
+  const zielFor = (group) => (group === 'auto' || group === 'rad');
+  const hm = (s) => { const m = Math.round(s / 60); return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')} h` : `${m} min`; };
+  const hmSay = (s) => { const m = Math.round(s / 60), h = Math.floor(m / 60); return (h ? `${h} Stunde${h === 1 ? '' : 'n'} ` : '') + `${m % 60} Minute${m % 60 === 1 ? '' : 'n'}`; };
+
+  function renderVorfahrt() {
+    const el = $('#vorfahrt');
+    if (!apiBase()) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const group = MODE_GROUP[selectedMode()];
+    let line = '';
+    if (lageOn() && lageCache) {
+      const { lines, hits } = myLage(group);
+      if (!lines.length) line = `<p class="small muted vf-hint">Nach den ersten Fahrten prüft Flowtown hier deine Wege auf Stau, Baustellen und Sperrungen.</p>`;
+      else if (!hits.length) line = `<p class="vf-line ok">${ic('check')}<span>Deine Wege: frei</span></p>`;
+      else {
+        const h = hits[0];
+        const sum = [`<b>${esc(h.titel)}</b>`, esc(LAGE_LABEL[h.art]), delayText(h.delay), hits.length > 1 ? `+${hits.length - 1} weitere` : ''].filter(Boolean).join(' · ');
+        line = `<button type="button" class="vf-line ${LAGE_CLS[h.art]}" data-vf="lage" aria-expanded="${vfOpen}"><span class="lg-dot" aria-hidden="true"></span><span>${sum}</span>${ic('chevron', 'vf-chev')}</button>`;
+        if (vfOpen) {
+          line += `<ul class="lg-list vf-detail">${hits.slice(0, 6).map((x) => lageRow(x.art, lageBtn(x), [LAGE_LABEL[x.art], delayText(x.delay), x.richtungText, lines.length > 1 ? 'auf ' + x.line.name : ''].filter(Boolean).map(esc).join(' · '), x.art !== 'zaeh' ? x.texts[0] : '')).join('')}</ul>`
+            + `<p class="small muted lg-src">Stand ${clock(lageCache.t || Date.now())} Uhr · ${esc(lageSrc((lageCache.quellen || []).map((q) => q.name)))}</p>`;
+        }
+      }
+    } else if (lageOn()) line = `<p class="small muted vf-hint">Lage wird geladen …</p>`;
+    const can = zielFor(group);
+    const chips = settings.ziele.map((z) => `<button type="button" class="vf-chip${zielOpen === z.id ? ' on' : ''}" data-ziel="${z.id}" aria-expanded="${zielOpen === z.id}"${can ? '' : ' disabled'}>${esc(z.name)}</button>`).join('')
+      + (settings.ziele.length < ZIEL_MAX ? `<button type="button" class="vf-chip add${zielOpen === 'neu' ? ' on' : ''}" data-ziel="neu" aria-expanded="${zielOpen === 'neu'}"${can ? '' : ' disabled'}>+ Ziel</button>` : '');
+    // offenes Ziel nach einem Wechsel des Verkehrsmittels gleich neu prüfen
+    const openZ = can && zielOpen && zielOpen !== 'neu' && !zielEdit ? settings.ziele.find((z) => z.id === zielOpen) : null;
+    if (openZ && !zielRes[openZ.id + '|' + group]) { checkZiel(openZ); return; }
+    const panel = !can ? (settings.ziele.length ? '<p class="small muted">Ziele prüft Flowtown mit dem Auto und dem Rad.</p>' : '')
+      : zielOpen === 'neu' ? zielForm() : zielOpen ? zielPanel(settings.ziele.find((z) => z.id === zielOpen), group) : '';
+    el.innerHTML = `<div class="card vf"><h3 class="vf-title">Vor der Fahrt</h3>${line}<div class="vf-chips" role="group" aria-label="Deine Ziele">${chips}</div>${panel}</div>`;
   }
+  function zielForm() {
+    const list = ortList ? (ortList.length
+      ? `<ul class="vf-orte">${ortList.map((o, i) => `<li><button type="button" class="vf-ort" data-ort="${i}"><b>${esc(o.name)}</b>${o.sub ? `<span class="small muted">${esc(o.sub)}</span>` : ''}</button></li>`).join('')}</ul>`
+      : '<p class="small muted">Nichts gefunden. Versuch es mit Ort und Straße.</p>') : '';
+    return `<div class="vf-panel"><form class="vf-form" data-vf="suche"><label class="sr-only" for="inp-ziel">Ziel: Ort oder Adresse</label><input id="inp-ziel" type="search" placeholder="Ort oder Adresse" autocomplete="off" enterkeyhint="search" value="${esc(ortQ)}"><button class="btn" type="submit">Suchen</button></form>
+      ${ortMsg ? `<p class="small muted" role="status">${esc(ortMsg)}</p>` : ''}${list}
+      <p class="small muted">${ic('shield')} Für die Prüfung gehen das Ziel und dein ungefährer Standort (auf etwa 1 km gerundet) an den Flowtown-Server und an HERE. Gespeichert wird dort nichts, deine Ziele bleiben auf dem Handy.</p></div>`;
+  }
+  function zielPanel(z, group) {
+    if (!z) return '';
+    const head = `<div class="vf-phead"><b>${esc(z.name)}</b><button type="button" class="btn-link" data-vf="edit">Bearbeiten</button><button type="button" class="vf-x" data-vf="close" aria-label="Schließen">${ic('x')}</button></div>`;
+    if (zielEdit) return `<div class="vf-panel">${head}<form class="vf-form" data-vf="rename"><label class="sr-only" for="inp-zielname">Name des Ziels</label><input id="inp-zielname" type="text" maxlength="30" value="${esc(z.name)}"><button class="btn" type="submit">Speichern</button></form><button type="button" class="btn quiet danger-text" data-vf="del">${ic('trash')}Ziel löschen</button></div>`;
+    const r = zielRes[z.id + '|' + group];
+    if (!r || r.loading) return `<div class="vf-panel">${head}<p class="small muted" role="status">Strecke wird geprüft …</p></div>`;
+    if (r.error) return `<div class="vf-panel">${head}<p class="small" role="status">${esc(r.error)}</p><button type="button" class="btn quiet" data-vf="again">Noch einmal prüfen</button></div>`;
+    const d = r.data, route = d.pts.map((p) => p.join(',')).join(';');
+    const verzug = d.dauer - d.basis;
+    const sum = `<div class="vf-sum"><b class="vf-dur">${hm(d.dauer)}</b><span class="small muted">${group === 'rad' ? 'mit dem Rad' : verzug >= 120 ? `heute +${Math.round(verzug / 60)} min Verkehr` : 'kaum Verkehr'} · ${fmtNum(d.km, 0)} km${r.fallback ? ' · Start: Bielefeld' : ''}</span></div>`;
+    const items = d.items.slice().sort((a, b) => LAGE_RANK[a.art] - LAGE_RANK[b.art] || (b.delay || 0) - (a.delay || 0));
+    const btn = (it) => `<button type="button" class="place" data-peek="l" data-name="${esc(it.titel)}" data-art="${it.art}" data-lines="${it.pts.map((q) => q.join(',')).join(';')}" data-pts="${route}">${esc(it.titel)}</button>`;
+    const rows = items.length
+      ? `<ul class="lg-list">${items.slice(0, 4).map((it) => lageRow(it.art, btn(it), [LAGE_LABEL[it.art], delayText(it.delay), it.km != null ? `nach ${it.km} km` : '', it.richtungText].filter(Boolean).map(esc).join(' · '), it.art !== 'zaeh' ? it.text : '')).join('')}</ul>${items.length > 4 ? `<p class="small muted">und ${items.length - 4} weitere, alle auf der Karte</p>` : ''}`
+      : `<p class="vf-line ok">${ic('check')}<span>Keine Meldungen entlang der Strecke</span></p>`;
+    const alt = d.alternative ? `<p class="note">${ic('route')}<span>Andere Strecke${d.alternative.strassen.length ? ' über ' + esc(d.alternative.strassen.join(', ')) : ''}: etwa ${Math.round((d.dauer - d.alternative.dauer) / 60)} min schneller.</span></p>` : '';
+    let bars = '';
+    if (d.abfahrt && d.abfahrt.length > 1) {
+      const ds = d.abfahrt.map((a) => a.dauer), lo = Math.min(...ds), hi = Math.max(...ds);
+      const best = d.abfahrt.find((a) => a.dauer === lo);
+      const label = (a) => (a.t ? clock(a.t) : 'jetzt');
+      const gain = d.abfahrt[0].dauer - lo;
+      const say = `Beste Abfahrt ${best.t ? 'um ' + clock(best.t) : 'jetzt'}, ${hmSay(lo)}. ` + d.abfahrt.map((a) => `${label(a)}: ${hmSay(a.dauer)}`).join(', ') + '.';
+      bars = `<h4 class="vf-h4">Wann losfahren?</h4><div class="vf-bars" role="img" aria-label="${esc(say)}">${d.abfahrt.map((a) => `<div class="vf-col${a === best ? ' best' : ''}"><span class="vf-bar" style="height:${Math.round(12 + (hi > lo ? (a.dauer - lo) / (hi - lo) : 0) * 44)}px"></span><span class="vf-v">${hm(a.dauer).replace(' h', '')}</span><span class="vf-t">${label(a)}</span></div>`).join('')}</div>`
+        + (best.t && gain >= 300 ? `<p class="tip">${ic('clock')}<span>Um ${clock(best.t)} bist du etwa ${Math.round(gain / 60)} min kürzer unterwegs als jetzt.</span></p>` : '');
+    }
+    const all = `<button type="button" class="btn quiet" data-peek="l" data-name="${esc(z.name)}" data-art="stau" data-lines="${items.map((it) => it.pts.map((q) => q.join(',')).join(';')).join('|')}" data-arts="${items.map((it) => it.art).join('|')}" data-pts="${route}">${ic('map')}Strecke auf der Karte</button>`;
+    const foot = `<p class="small muted lg-src">Stand ${clock(d.t)} Uhr · ${esc(lageSrc(['HERE'].concat(d.items.some((it) => it.quelle === 'Autobahn GmbH') ? ['Autobahn GmbH'] : [])))} · <button type="button" class="btn-link" data-vf="again">neu prüfen</button></p>`;
+    return `<div class="vf-panel">${head}${sum}${rows}${alt}${bars}${all}${foot}</div>`;
+  }
+  function myStart() {
+    return new Promise((resolve) => {
+      if (!('geolocation' in navigator)) return resolve(null);
+      navigator.geolocation.getCurrentPosition((p) => resolve([p.coords.latitude, p.coords.longitude]), () => resolve(null), { enableHighAccuracy: false, maximumAge: 600000, timeout: 8000 });
+    });
+  }
+  async function checkZiel(z, force) {
+    const group = MODE_GROUP[selectedMode()];
+    const key = z.id + '|' + group;
+    const old = zielRes[key];
+    if (!force && old && old.data && Date.now() - old.t < 300000) return;
+    zielRes[key] = { loading: true };
+    renderVorfahrt();
+    const pos = await myStart();
+    const from = (pos || [52.02, 8.53]).map((x) => Math.round(x * 100) / 100);   // auf etwa 1 km gerundet, ohne Standort: Bielefeld
+    try {
+      const data = await api(`/api/ziel?from=${from.join(',')}&to=${z.lat},${z.lon}&mode=${group}`);
+      zielRes[key] = { t: Date.now(), data, fallback: !pos };
+    } catch (e) {
+      zielRes[key] = { error: e.message === 'Failed to fetch' ? 'Keine Verbindung zum Server.' : e.message };
+    }
+    if (zielOpen === z.id) renderVorfahrt();
+  }
+  async function searchOrt(q) {
+    ortQ = q; ortMsg = 'Suche …'; ortList = null; renderVorfahrt();
+    try { ortList = (await api('/api/ort?q=' + encodeURIComponent(q))).orte || []; ortMsg = ''; }
+    catch (e) { ortMsg = e.message; }
+    renderVorfahrt();
+  }
+  function addZiel(o) {
+    const z = { id: 'z' + Date.now().toString(36), name: o.name.split(',')[0].slice(0, 30), sub: o.sub || '', lat: o.lat, lon: o.lon };
+    settings.ziele.push(z); store.set('settings', settings);
+    ortList = null; ortQ = ''; ortMsg = '';
+    zielOpen = z.id; zielEdit = false;
+    checkZiel(z);
+  }
+  // Bedienung: Klicks, Formulare und langes Drücken auf einen Ziel-Chip (öffnet Bearbeiten)
+  let pressTimer = null, pressed = false;
+  $('#vorfahrt').addEventListener('pointerdown', (ev) => {
+    const c = ev.target.closest('.vf-chip[data-ziel]:not(.add)');
+    pressed = false;
+    if (!c || c.disabled) return;
+    pressTimer = setTimeout(() => { pressed = true; zielOpen = c.dataset.ziel; zielEdit = true; renderVorfahrt(); }, 550);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => $('#vorfahrt').addEventListener(t, () => clearTimeout(pressTimer)));
+  $('#vorfahrt').addEventListener('click', (ev) => {
+    if (pressed) { pressed = false; ev.preventDefault(); return; }
+    const c = ev.target.closest('[data-ziel]');
+    if (c) {
+      const id = c.dataset.ziel;
+      zielEdit = false;
+      zielOpen = zielOpen === id ? null : id;
+      if (zielOpen && id !== 'neu') checkZiel(settings.ziele.find((z) => z.id === id));
+      renderVorfahrt();
+      if (zielOpen === 'neu') { const i = $('#inp-ziel'); if (i) i.focus(); }
+      return;
+    }
+    const o = ev.target.closest('[data-ort]');
+    if (o && ortList) { addZiel(ortList[Number(o.dataset.ort)]); return; }
+    const b = ev.target.closest('[data-vf]');
+    if (!b) return;
+    const z = settings.ziele.find((x) => x.id === zielOpen);
+    const act = b.dataset.vf;
+    if (act === 'lage') vfOpen = !vfOpen;
+    else if (act === 'close') { zielOpen = null; zielEdit = false; }
+    else if (act === 'edit') zielEdit = !zielEdit;
+    else if (act === 'again' && z) { checkZiel(z, true); return; }
+    else if (act === 'del' && z) { settings.ziele = settings.ziele.filter((x) => x !== z); store.set('settings', settings); zielOpen = null; zielEdit = false; }
+    else return;
+    renderVorfahrt();
+  });
+  $('#vorfahrt').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const f = ev.target.closest('[data-vf]');
+    if (f.dataset.vf === 'suche') { const q = $('#inp-ziel').value.trim(); if (q.length >= 2) searchOrt(q); }
+    if (f.dataset.vf === 'rename') {
+      const z = settings.ziele.find((x) => x.id === zielOpen), name = $('#inp-zielname').value.trim();
+      if (z && name) { z.name = name.slice(0, 30); store.set('settings', settings); }
+      zielEdit = false; renderVorfahrt();
+    }
+  });
 
   // ---------- Tipps: feste Auswertung auf dem Gerät, noch ohne KI ----------
   const BIKE_KMH = 15, WALK_KMH = 4.8;   // Annahmen für Schätzungen

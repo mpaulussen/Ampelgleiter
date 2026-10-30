@@ -1,11 +1,12 @@
 # Flowtown-Server
 
-Kleiner Server ohne Abhängigkeiten (Node 18 oder neuer) für vier Aufgaben:
+Kleiner Server ohne Abhängigkeiten (Node 18 oder neuer) für fünf Aufgaben:
 
 - **Ebene „Wir“**: Die App sendet je Ampel nur Richtung (Achtel), Zeitfenster und Wartezeit. Der Server speichert Summen je Ampel, Richtung und Zeitfenster und zeigt sie erst, wenn mindestens `K_MIN` verschiedene Personen beigetragen haben. Fahrten, Uhrzeiten, Start und Ziel kommen nie an.
 - **KI-Einschätzung**: Die App schickt zusammengefasste Werte (keine Koordinaten), der Server fragt Mistral und gibt Einschätzung und Empfehlungen zurück. Anfragen werden nicht gespeichert, höchstens `KI_PER_DAY` je IP und Tag.
 - **Meldungen**: `news.json` im Datenordner, von dir gepflegt. Die App zeigt nur Meldungen, die ihre eigenen Wege berühren; das prüft sie selbst.
 - **Verkehrslage vor der Fahrt** (`GET /api/lage`): Stau, Störungen, Baustellen und Sperrungen für ganz Bielefeld. Quellen: Autobahn GmbH des Bundes (A2, A33, ohne Schlüssel) und HERE (Stadtstraßen, mit Schlüssel). Der Server holt höchstens alle `LAGE_MIN` Minuten neu und nur, wenn eine App fragt; alle Apps bekommen dasselbe Gesamtbild. Welche Meldungen die eigenen Wege betreffen, prüft die App auf dem Handy.
+- **Ziel prüfen** (`GET /api/ort`, `GET /api/ziel`): Nur auf Knopfdruck. Die App schickt das Ziel und ihren Standort, auf etwa 1 km gerundet. Der Server fragt HERE nach der Strecke mit Verkehr (jetzt und vier spätere Abfahrtszeiten), holt Störungen entlang der Strecke (HERE, Autobahn GmbH) und vergisst die Anfrage nach 3 Minuten. Etwa acht HERE-Abfragen je Prüfung, höchstens `ZIEL_PER_DAY` Prüfungen je IP und Tag. Braucht denselben HERE-Schlüssel.
 
 ## Einrichten auf Ubuntu (songdeepdive-Server)
 

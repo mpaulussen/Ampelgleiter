@@ -99,15 +99,19 @@ Antworte nur mit JSON:
  "groesster_hebel": "1 Satz: die eine Änderung, die laut moegliche_ersparnisse oder zeitfresser am meisten bringt",
  "empfehlungen": [{"titel": "kurz, mit Ort oder Uhrzeit", "text": "1 bis 2 Sätze mit Zahl und konkreter Handlung"}]}`;
 
-const kiCount = new Map();   // IP → { day, n }
-function kiAllowed(ip) {
-  const day = new Date().toISOString().slice(0, 10);
-  const e = kiCount.get(ip);
-  if (!e || e.day !== day) { kiCount.set(ip, { day, n: 1 }); return true; }
-  if (e.n >= KI_PER_DAY) return false;
-  e.n += 1;
-  return true;
+// Tageslimit je IP, getrennt nach Zweck
+function limiter(max) {
+  const count = new Map();   // IP → { day, n }
+  return (ip) => {
+    const day = new Date().toISOString().slice(0, 10);
+    const e = count.get(ip);
+    if (!e || e.day !== day) { count.set(ip, { day, n: 1 }); return true; }
+    if (e.n >= max) return false;
+    e.n += 1;
+    return true;
+  };
 }
+const kiAllowed = limiter(KI_PER_DAY);
 async function askMistral(facts) {
   if (!MISTRAL_KEY) throw Object.assign(new Error('Kein MISTRAL_API_KEY gesetzt'), { status: 503 });
   const ctrl = new AbortController();
@@ -190,15 +194,15 @@ async function hereFlow() {
     if (!closed && (delay == null || delay < 10)) continue;   // kurze Abschnitte mit wenigen Sekunden Verlust sind Rauschen
     out.push({
       id: 'hf' + crypto.createHash('sha1').update(JSON.stringify(pts[0]) + JSON.stringify(pts[pts.length - 1])).digest('hex').slice(0, 10),
-      quelle: 'HERE', art: closed ? 'sperrung' : cf.jamFactor >= 8 ? 'stau' : 'zaeh', richtung: true,
+      quelle: 'HERE', richtung: true, art: closed ? 'sperrung' : cf.jamFactor >= 8 ? 'stau' : 'zaeh', richtung: true,
       titel: clip(loc.description || 'Straße', 60), text: closed ? 'gesperrt' : `Ø ${kmh(spd)} km/h statt ${kmh(ff)} km/h`, delay, pts
     });
   }
   return out;
 }
 const HERE_ART = { accident: 'unfall', congestion: 'stau', construction: 'baustelle', roadClosure: 'sperrung', laneRestriction: 'baustelle', disabledVehicle: 'warnung', roadHazard: 'warnung', plannedEvent: 'warnung', weather: 'warnung', massTransit: 'warnung', other: 'warnung' };
-async function hereIncidents() {
-  const j = await getJson(`${HERE_URL}/incidents?in=bbox:${LAGE_BBOX.join(',')}&locationReferencing=shape&lang=de-DE&apiKey=${encodeURIComponent(HERE_KEY)}`);
+async function hereIncidents(box) {
+  const j = await getJson(`${HERE_URL}/incidents?in=bbox:${(box || LAGE_BBOX).map((x) => x.toFixed(4)).join(',')}&locationReferencing=shape&lang=de-DE&apiKey=${encodeURIComponent(HERE_KEY)}`);
   const out = [];
   for (const r of j.results || []) {
     const d = r.incidentDetails || {}, loc = r.location || {};
@@ -206,7 +210,7 @@ async function hereIncidents() {
     if (!pts.length) continue;
     const sum = d.summary && d.summary.value, desc = d.description && d.description.value;
     out.push({
-      id: 'hi' + String(d.id || d.originalId || out.length).slice(-16), quelle: 'HERE',
+      id: 'hi' + String(d.id || d.originalId || out.length).slice(-16), quelle: 'HERE', richtung: pts.length > 1,
       art: d.roadClosed ? 'sperrung' : HERE_ART[d.type] || 'warnung',
       titel: clip(loc.description || sum || 'Meldung', 60), text: clip(desc || sum || '', 220), bis: d.endTime || null, pts
     });
@@ -215,31 +219,44 @@ async function hereIncidents() {
 }
 // Autobahn GmbH des Bundes: Warnungen, Sperrungen, Baustellen auf den Autobahnen rund um Bielefeld (offen, ohne Schlüssel)
 const AB_SVC = { warning: 'warnung', closure: 'sperrung', roadworks: 'baustelle' };
-async function autobahn() {
-  const jobs = [];
-  for (const road of LAGE_ROADS) for (const svc of Object.keys(AB_SVC)) jobs.push(getJson(`${AUTOBAHN_URL}/${road}/services/${svc}`).then((j) => ({ svc, list: j[svc] || [] })));
-  const done = await Promise.allSettled(jobs);
-  if (done.length && done.every((r) => r.status === 'rejected')) throw new Error('nicht erreichbar: ' + done[0].reason.message);
-  const out = [];
-  for (const res of done) {
-    if (res.status !== 'fulfilled') continue;
-    for (const x of res.value.list) {
-      if (!x || x.future || x.display_type === 'WEIGHT_LIMIT_35') continue;
-      const lat = Number(x.coordinate && x.coordinate.lat), lon = Number(x.coordinate && x.coordinate.long);
-      if (!inBox(lat, lon, 0.05)) continue;
-      const geo = x.geometry && x.geometry.type === 'LineString' && Array.isArray(x.geometry.coordinates) ? x.geometry.coordinates.map((c) => [c[1], c[0]]) : [];
-      const pts = thin(geo.length ? geo : [[lat, lon]]);
-      let art = AB_SVC[res.value.svc];
-      if (art === 'warnung' && /STATIONARY|QUEUING|SLOW/.test(x.abnormalTrafficType || '')) art = 'stau';
-      const lines = (x.description || []).map(String).filter((s) => s.trim() && !/^(Beginn|Ende):/.test(s));
-      const delay = Number(x.delayTimeValue) > 0 ? Number(x.delayTimeValue) * 60 : null;
-      out.push({
-        id: 'ab' + String(x.identifier || '').slice(-16), quelle: 'Autobahn GmbH', art,
-        titel: clip(x.title || 'Autobahn', 60), richtungText: clip(x.subtitle || '', 60), text: clip(lines.join(' '), 220), delay, pts
-      });
+// je Autobahn höchstens alle LAGE_MIN Minuten abrufen; gilt für die Stadtlage und für Strecken
+const abCache = new Map();   // Straße → { t, items, run }
+async function abRoad(road) {
+  const c = abCache.get(road);
+  if (c && Date.now() - c.t < LAGE_MIN * 60000) return c.items;
+  if (c && c.run) return c.run;
+  const run = (async () => {
+    const done = await Promise.allSettled(Object.keys(AB_SVC).map((svc) => getJson(`${AUTOBAHN_URL}/${road}/services/${svc}`).then((j) => ({ svc, list: j[svc] || [] }))));
+    if (done.every((r) => r.status === 'rejected')) throw new Error('nicht erreichbar: ' + done[0].reason.message);
+    const out = [];
+    for (const res of done) {
+      if (res.status !== 'fulfilled') continue;
+      for (const x of res.value.list) {
+        if (!x || x.future || x.display_type === 'WEIGHT_LIMIT_35') continue;
+        const lat = Number(x.coordinate && x.coordinate.lat), lon = Number(x.coordinate && x.coordinate.long);
+        if (!isFinite(lat) || !isFinite(lon)) continue;
+        const geo = x.geometry && x.geometry.type === 'LineString' && Array.isArray(x.geometry.coordinates) ? x.geometry.coordinates.map((g) => [g[1], g[0]]) : [];
+        const pts = thin(geo.length ? geo : [[lat, lon]]);
+        let art = AB_SVC[res.value.svc];
+        if (art === 'warnung' && /STATIONARY|QUEUING|SLOW/.test(x.abnormalTrafficType || '')) art = 'stau';
+        const lines = (x.description || []).map(String).filter((t) => t.trim() && !/^(Beginn|Ende):/.test(t));
+        const delay = Number(x.delayTimeValue) > 0 ? Number(x.delayTimeValue) * 60 : null;
+        out.push({
+          id: 'ab' + String(x.identifier || '').slice(-16), quelle: 'Autobahn GmbH', art,
+          titel: clip(x.title || road, 60), richtungText: clip(x.subtitle || '', 60), text: clip(lines.join(' '), 220), delay, pts
+        });
+      }
     }
-  }
-  return out;
+    abCache.set(road, { t: Date.now(), items: out });
+    return out;
+  })();
+  abCache.set(road, Object.assign({}, c || { t: 0, items: [] }, { run }));
+  try { return await run; } catch (e) { if (c && c.items.length && Date.now() - c.t < 30 * 60000) { abCache.set(road, c); return c.items; } abCache.delete(road); throw e; }
+}
+async function autobahn() {
+  const done = await Promise.allSettled(LAGE_ROADS.map(abRoad));
+  if (done.length && done.every((r) => r.status === 'rejected')) throw new Error(done[0].reason.message);
+  return [].concat(...done.filter((r) => r.status === 'fulfilled').map((r) => r.value)).filter((it) => it.pts.some((q) => inBox(q[0], q[1], 0.05)));
 }
 
 const lage = { here: { items: [], t: 0 }, autobahn: { items: [], t: 0 } };
@@ -266,6 +283,163 @@ async function readLage() {
   };
 }
 
+// ---------- Ziel prüfen: Strecke mit Verkehr, Meldungen entlang der Strecke, beste Abfahrt ----------
+// Nur auf Knopfdruck. Der Start kommt auf etwa 1 km gerundet an, gespeichert wird nichts außer einem kurzen Zwischenspeicher.
+const ROUTER_URL = process.env.HERE_ROUTER_URL || 'https://router.hereapi.com/v8/routes';
+const GEOCODE_URL = process.env.HERE_GEOCODE_URL || 'https://geocode.search.hereapi.com/v1/geocode';
+const ZIEL_PER_DAY = Number(process.env.ZIEL_PER_DAY || 40);
+const zielAllowed = limiter(ZIEL_PER_DAY), ortAllowed = limiter(ZIEL_PER_DAY);
+
+// HEREs „Flexible Polyline“ entpacken (ohne Bibliothek, mit Gleitkomma statt Bitoperationen, damit große Werte stimmen)
+const FP = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function decodeFlex(str) {
+  let i = 0;
+  const next = () => {
+    let res = 0, mul = 1, v;
+    do {
+      v = FP.indexOf(str[i++]);
+      if (v < 0) throw new Error('polyline');
+      res += (v & 31) * mul; mul *= 32;
+    } while (v & 32);
+    return res;
+  };
+  const signed = (u) => (u % 2 ? -(u + 1) / 2 : u / 2);
+  if (next() !== 1) throw new Error('polyline version');
+  const head = next(), prec = 10 ** (head % 16), third = Math.floor(head / 16) % 8;
+  const out = [];
+  let lat = 0, lon = 0;
+  while (i < str.length) {
+    lat += signed(next()); lon += signed(next());
+    if (third) next();
+    out.push([lat / prec, lon / prec]);
+  }
+  return out;
+}
+// Geometrie in Metern (flache Näherung je Punkt)
+const R = Math.PI / 180;
+function segDist(p, a, b) {
+  const kx = 111320 * Math.cos(p[0] * R), ky = 110540;
+  const ax = (a[1] - p[1]) * kx, ay = (a[0] - p[0]) * ky, bx = (b[1] - p[1]) * kx, by = (b[0] - p[0]) * ky;
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const u = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+  return Math.hypot(ax + u * dx, ay + u * dy);
+}
+const brg = (a, b) => (Math.atan2((b[1] - a[1]) * Math.cos(a[0] * R), b[0] - a[0]) / R + 360) % 360;
+const angGap = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+// nächster Abschnitt der Strecke zu einem Punkt: Abstand und Fahrtrichtung dort
+function nearRoute(p, route) {
+  let best = { d: Infinity, h: 0, i: 0 };
+  for (let k = 0; k < route.length - 1; k++) {
+    const d = segDist(p, route[k], route[k + 1]);
+    if (d < best.d) best = { d, h: brg(route[k], route[k + 1]), i: k };
+  }
+  return best;
+}
+// Liegt eine Meldung auf der Strecke, und zwar in Fahrtrichtung?
+function onRoute(it, route, tol) {
+  const near = it.pts.map((q) => Object.assign({ q }, nearRoute(q, route))).filter((m) => m.d <= tol);
+  if (!near.length) return null;
+  if (it.richtung && near.length >= 2) {
+    const a = near[0].q, b = near[near.length - 1].q;
+    if ((Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1])) > 0.0002 && angGap(brg(a, b), near[0].h) > 60) return null;   // Gegenrichtung
+  }
+  return near[0].i;
+}
+// Strecke in Rechtecke von höchstens 0,9 Grad teilen (Grenze der Verkehrsabfrage)
+function boxesAlong(route) {
+  const boxes = [];
+  let box = null;
+  for (const p of route) {
+    const nb = box ? [Math.min(box[0], p[1]), Math.min(box[1], p[0]), Math.max(box[2], p[1]), Math.max(box[3], p[0])] : [p[1], p[0], p[1], p[0]];
+    if (box && (nb[2] - nb[0] > 0.9 || nb[3] - nb[1] > 0.9)) { boxes.push(box); box = [p[1], p[0], p[1], p[0]]; } else box = nb;
+  }
+  if (box) boxes.push(box);
+  return boxes.map((b) => [b[0] - 0.01, b[1] - 0.01, b[2] + 0.01, b[3] + 0.01]);
+}
+async function hereRoute(from, to, mode, opts) {
+  const q = new URLSearchParams({ transportMode: mode === 'rad' ? 'bicycle' : 'car', origin: from.join(','), destination: to.join(','), apiKey: HERE_KEY });
+  if (opts.full) { q.set('return', 'summary,polyline,typicalDuration'); q.set('spans', 'routeNumbers'); if (mode !== 'rad') q.set('alternatives', '1'); }
+  else q.set('return', 'summary');
+  if (opts.at) q.set('departureTime', opts.at);
+  const j = await getJson(`${ROUTER_URL}?${q}`, 12000);
+  return (j.routes || []).map((r) => {
+    const secs = r.sections || [];
+    const sum = (k) => secs.reduce((a, x) => a + (Number(x.summary && x.summary[k]) || 0), 0);
+    const pts = opts.full ? [].concat(...secs.map((x) => (x.polyline ? decodeFlex(x.polyline) : []))) : [];
+    const roads = [];
+    for (const x of secs) for (const sp of x.spans || []) for (const rn of sp.routeNumbers || []) { const v = String(rn.value || rn || '').replace(/\s+/g, ''); if (v && !roads.includes(v)) roads.push(v); }
+    return { dauer: sum('duration'), basis: sum('baseDuration') || sum('typicalDuration') || sum('duration'), m: sum('length'), pts, roads };
+  });
+}
+// Abfahrtszeiten: jetzt, dann volle und halbe Stunden ab einer Viertelstunde von jetzt
+function slots(now) {
+  const t = new Date(now + 15 * 60000);
+  t.setSeconds(0, 0);
+  t.setMinutes(t.getMinutes() <= 30 && t.getMinutes() > 0 ? 30 : t.getMinutes() === 0 ? 0 : 60);
+  return [0, 1, 2, 3].map((k) => new Date(t.getTime() + k * 30 * 60000));
+}
+const zielCache = new Map();   // kurzer Zwischenspeicher gegen Doppel-Tipps, 3 Minuten
+async function checkZiel(from, to, mode) {
+  const key = [from, to, mode].join('|');
+  const hit = zielCache.get(key);
+  if (hit && Date.now() - hit.t < 180000) return hit.v;
+  const [main, ...alts] = await hereRoute(from, to, mode, { full: true });
+  if (!main || main.pts.length < 2) throw Object.assign(new Error('Keine Strecke gefunden'), { status: 404 });
+  const route = main.pts.filter((p, k) => k % 3 === 0 || k === main.pts.length - 1);   // reicht für den Abgleich
+  // Meldungen: HERE entlang der Strecke, Autobahn GmbH für die Autobahnen darauf
+  const jobs = boxesAlong(route).map((b) => hereIncidents(b));
+  const autobahns = main.roads.filter((r) => /^A\d{1,3}$/.test(r)).slice(0, 8);
+  jobs.push(...autobahns.map(abRoad));
+  const items = [], seen = new Set();
+  for (const r of await Promise.allSettled(jobs)) {
+    if (r.status !== 'fulfilled') continue;
+    for (const it of r.value) {
+      if (seen.has(it.id)) continue;
+      if (mode === 'rad' && !['sperrung', 'baustelle', 'unfall'].includes(it.art)) continue;
+      const at = onRoute(it, route, it.quelle === 'Autobahn GmbH' && it.pts.length === 1 ? 300 : 120);
+      if (at == null) continue;
+      seen.add(it.id);
+      items.push(Object.assign({ km: Math.round(route.slice(0, at + 1).reduce((a, p, k, arr) => a + (k ? segDist(p, arr[k - 1], arr[k - 1]) : 0), 0) / 1000) }, it));
+    }
+  }
+  // Abfahrtsleiste (nur Auto): jetzt plus vier Zeiten, mit HEREs Vorhersage
+  let abfahrt = null;
+  if (mode !== 'rad') {
+    const ts = slots(Date.now());
+    const later = await Promise.allSettled(ts.map((t) => hereRoute(from, to, mode, { at: t.toISOString() })));
+    abfahrt = [{ t: null, dauer: main.dauer }].concat(later.map((r, k) => (r.status === 'fulfilled' && r.value[0] ? { t: ts[k].toISOString(), dauer: r.value[0].dauer } : null)).filter(Boolean));
+  }
+  const alt = alts.find((a) => main.dauer - a.dauer >= 600);
+  const v = {
+    t: Date.now(), mode, dauer: main.dauer, basis: main.basis, km: Math.round(main.m / 100) / 10, strassen: main.roads.slice(0, 6),
+    pts: thin2(main.pts, 160), items, abfahrt,
+    alternative: alt ? { dauer: alt.dauer, strassen: alt.roads.filter((r) => !main.roads.includes(r)).slice(0, 3) } : null
+  };
+  zielCache.set(key, { t: Date.now(), v });
+  if (zielCache.size > 200) zielCache.delete(zielCache.keys().next().value);
+  return v;
+}
+function thin2(pts, n) {
+  if (pts.length <= n) return pts.map((p) => [r5(p[0]), r5(p[1])]);
+  const step = (pts.length - 1) / (n - 1);
+  return Array.from({ length: n }, (_, k) => pts[Math.round(k * step)]).map((p) => [r5(p[0]), r5(p[1])]);
+}
+async function findOrt(q) {
+  const u = `${GEOCODE_URL}?${new URLSearchParams({ q, limit: '3', lang: 'de-DE', in: 'countryCode:DEU,NLD,BEL,LUX,FRA,CHE,AUT,DNK,POL,CZE', apiKey: HERE_KEY })}`;
+  const j = await getJson(u);
+  return (j.items || []).filter((x) => x.position).slice(0, 3).map((x) => {
+    const a = x.address || {};
+    const name = a.street ? `${a.street}${a.houseNumber ? ' ' + a.houseNumber : ''}, ${a.city || ''}` : a.city || a.label || x.title;
+    return { name: clip(name, 50), sub: clip([a.postalCode, a.city !== name ? a.city : '', a.state, a.countryName !== 'Deutschland' ? a.countryName : ''].filter(Boolean).join(' · '), 70), lat: r5(x.position.lat), lon: r5(x.position.lng) };
+  });
+}
+const coord = (s, digits) => {
+  const v = String(s || '').split(',').map(Number);
+  if (v.length !== 2 || !(Math.abs(v[0]) <= 90) || !(Math.abs(v[1]) <= 180)) throw Object.assign(new Error('Koordinaten'), { status: 400 });
+  const f = 10 ** digits;
+  return v.map((x) => Math.round(x * f) / f);
+};
+
 // ---------- HTTP ----------
 function send(res, status, obj, origin) {
   const h = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Origin' };
@@ -289,7 +463,7 @@ const server = http.createServer(async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   try {
     if (req.method === 'OPTIONS') return send(res, 204, null, origin);
-    if (req.method === 'GET' && p === '/api/health') return send(res, 200, { ok: true, ki: !!MISTRAL_KEY, modell: MISTRAL_MODEL, kMin: K_MIN, lage: { here: !!HERE_KEY, autobahn: LAGE_ROADS } }, origin);
+    if (req.method === 'GET' && p === '/api/health') return send(res, 200, { ok: true, ki: !!MISTRAL_KEY, modell: MISTRAL_MODEL, kMin: K_MIN, lage: { here: !!HERE_KEY, autobahn: LAGE_ROADS }, ziel: !!HERE_KEY }, origin);
     if (req.method === 'POST' && p === '/api/wir') return send(res, 200, { ok: true, n: addWir(await readBody(req, 64 * 1024)) }, origin);
     if (req.method === 'GET' && p === '/api/wir') {
       const ids = (url.searchParams.get('s') || '').split(',').filter((s) => /^c\d{1,13}$/.test(s)).slice(0, 400);
@@ -301,6 +475,19 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await askMistral(body.facts || {}), origin);
     }
     if (req.method === 'GET' && p === '/api/lage') return send(res, 200, await readLage(), origin);
+    if (req.method === 'GET' && (p === '/api/ort' || p === '/api/ziel')) {
+      if (!HERE_KEY) return send(res, 503, { fehler: 'Ziel-Prüfung braucht einen HERE-Schlüssel auf dem Server.' }, origin);
+      if (p === '/api/ort') {
+        const q = (url.searchParams.get('q') || '').trim().slice(0, 80);
+        if (q.length < 2) return send(res, 400, { fehler: 'Bitte einen Ort eingeben.' }, origin);
+        if (!ortAllowed(ip)) return send(res, 429, { fehler: 'Heute sind keine weiteren Suchen möglich.' }, origin);
+        return send(res, 200, { orte: await findOrt(q) }, origin);
+      }
+      const from = coord(url.searchParams.get('from'), 2), to = coord(url.searchParams.get('to'), 4);   // Start auf etwa 1 km gerundet
+      const mode = url.searchParams.get('mode') === 'rad' ? 'rad' : 'auto';
+      if (!zielAllowed(ip)) return send(res, 429, { fehler: 'Heute sind keine weiteren Prüfungen möglich.' }, origin);
+      return send(res, 200, await checkZiel(from, to, mode), origin);
+    }
     if (req.method === 'GET' && p === '/api/news') return send(res, 200, { meldungen: readNews() }, origin);
     return send(res, 404, { fehler: 'unbekannt' }, origin);
   } catch (e) {
