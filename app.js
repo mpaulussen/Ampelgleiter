@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.21.1';
+  const VERSION = '0.21.2';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -433,10 +433,12 @@
         rec.samples = []; rec.slowSince = null;
       }
     }
-    let v = (c.speed != null && c.speed >= 0) ? c.speed : null;
+    const hasSpeed = c.speed != null && c.speed >= 0;
+    let v = hasSpeed ? c.speed : null;
     if (prev) {
       const d = dist(prev, p);
-      rec.trip.distance += d;
+      // im Stand springende Punkte zählen nicht als Strecke
+      if (!(hasSpeed && v < rec.cfg.stopV && d < Math.max(15, c.accuracy))) rec.trip.distance += d;
       if (v == null) v = d / ((t - prev.t) / 1000);
     }
     if (v == null) v = 0;
@@ -473,10 +475,13 @@
         checkPass(p, heading, t);
       }
     } else {
-      const moved = dist(rec.stop, p);
-      if (vs > cfg.goV || moved > 25) {
+      // In Bus und Bahn springt der GPS-Punkt im Stand oft um 20 bis 40 m: das ist noch kein Losfahren.
+      // Meldet das Handy ein Tempo, zählt das Tempo; der Abstand nur, wenn es keins meldet.
+      const moved = dist(rec.stop, p), moveLim = Math.max(25, Math.min(60, c.accuracy * 1.2));
+      const jumped = !hasSpeed && moved > moveLim;
+      if (vs > cfg.goV || jumped) {
         if (rec.fastSince == null) rec.fastSince = t;
-        if (t - rec.fastSince >= GO_CONFIRM_MS || moved > 25) endStop(rec.fastSince);
+        if (t - rec.fastSince >= GO_CONFIRM_MS || jumped) endStop(rec.fastSince);
       } else {
         rec.fastSince = null;
       }
@@ -558,6 +563,14 @@
     if (s.atStop && rec.transfer) return;   // Warten am Bahnsteig steckt schon in der Umstiegszeit
     const sigId = s.signal ? s.signal.id : null;
     const ev = rec.trip.events;
+    // Bus und Bahn: kurz hintereinander an derselben Haltestelle ist ein Halt
+    if (s.atStop) {
+      const e = ev[ev.length - 1];
+      if (e && e.type === 'halt' && e.atStop && s.t0 - e.tEnd < 30000 && dist({ lat: e.at[0], lon: e.at[1] }, s) <= STOP_M) {
+        e.wait += tEnd - e.tEnd; e.tEnd = tEnd;
+        return;
+      }
+    }
     // Mehrere kurze Halte vor derselben Ampel (Rückstau) zu einem Wartevorgang zusammenfassen
     if (sigId) {
       for (let i = ev.length - 1; i >= 0; i--) {
@@ -897,22 +910,23 @@
   }
   function planParts(t) {
     const ist = (t.end || t.start) - t.start, amp = tripWait(t);
-    return { ist, plan: t.plan.dauer * 1000, amp, slow: Math.max(0, slowMs(t) - amp) };
+    const stop = t.events.reduce((a, e) => a + (e.type === 'halt' && e.atStop ? e.wait : 0), 0);
+    return { ist, plan: t.plan.dauer * 1000, amp, stop, slow: Math.max(0, slowMs(t) - amp - stop) };
   }
   function planHtml(t) {
-    const p = t.plan, { ist, plan, amp, slow } = planParts(t);
+    const p = t.plan, { ist, plan, amp, stop, slow } = planParts(t);
     const max = Math.max(ist, plan, 1), pc = (x) => (x / max * 100).toFixed(1) + '%';
     const diff = ist - plan, dm = Math.round(Math.abs(diff) / 60000);
     const verdict = dm < 2 ? 'Fast genau wie geplant' : diff > 0 ? `${dm} min länger als geplant` : `${dm} min schneller als geplant`;
-    const flow = Math.max(0, ist - slow - amp);
+    const flow = Math.max(0, ist - slow - amp - stop);
     const reported = (p.meldungen || []).map((m) => `${m.titel} (${LAGE_LABEL[m.art] || 'Meldung'})`);
     return `<div class="plan">
       <h4 class="vf-h4">${ic('pin')} Ziel ${esc(p.name)}</h4>
       <div class="pl-row"><span>Geplant um ${clock(p.t)} Uhr</span><b>${hm(plan / 1000)}</b></div>
       <div class="pl-bar"><span class="pl-seg plan" style="width:${pc(plan)}"></span></div>
       <div class="pl-row"><span>Gebraucht</span><b>${hm(ist / 1000)}</b></div>
-      <div class="pl-bar" role="img" aria-label="${esc(`Gebraucht ${hmSay(ist / 1000)}, davon etwa ${hmSay(slow / 1000)} langsam oder im Stau und ${hmSay(amp / 1000)} an Ampeln`)}"><span class="pl-seg" style="width:${pc(flow)}"></span><span class="pl-seg slow" style="width:${pc(slow)}"></span><span class="pl-seg amp" style="width:${pc(amp)}"></span></div>
-      <ul class="pl-legend"><li><span class="lg-dot red"></span>etwa ${Math.round(slow / 60000)} min langsam oder im Stau</li><li><span class="lg-dot"></span>${Math.round(amp / 60000)} min an Ampeln</li></ul>
+      <div class="pl-bar" role="img" aria-label="${esc(`Gebraucht ${hmSay(ist / 1000)}, davon ${stop ? `${hmSay(stop / 1000)} an Haltestellen, ` : ''}etwa ${hmSay(slow / 1000)} langsam oder im Stau und ${hmSay(amp / 1000)} an Ampeln`)}"><span class="pl-seg" style="width:${pc(flow)}"></span>${stop ? `<span class="pl-seg stop" style="width:${pc(stop)}"></span>` : ''}<span class="pl-seg slow" style="width:${pc(slow)}"></span><span class="pl-seg amp" style="width:${pc(amp)}"></span></div>
+      <ul class="pl-legend">${stop ? `<li><span class="lg-dot stop"></span>${durText(stop)} an Haltestellen</li>` : ''}<li><span class="lg-dot red"></span>etwa ${Math.round(slow / 60000)} min langsam oder im Stau</li><li><span class="lg-dot"></span>${Math.round(amp / 60000)} min an Ampeln</li></ul>
       <p class="pl-verdict">${verdict}</p>
       ${reported.length ? `<p class="small muted">Vorher gemeldet: ${esc(reported.join(', '))}</p>` : ''}
       ${p.rest > 2 ? `<p class="note">${ic('info')}<span>Die Aufzeichnung endete etwa ${fmtNum(p.rest, 0)} km vor dem Ziel, der Vergleich ist nur grob.</span></p>` : ''}
@@ -962,21 +976,28 @@
     const dur = (t.end || t.start) - t.start;
     $('#review-label').textContent = words(t.mode).bilanz;
     let head, sub;
+    // Bus und Bahn: die Zeit an Haltestellen gehört dazu, sie ist weder Stau noch Ampel
+    const stops = t.events.filter((e) => e.type === 'halt' && e.atStop);
+    const stopT = stops.reduce((a, e) => a + e.wait, 0);
+    const transit = isTransit(t.mode) || stops.length > 0;
     if (t.plan) {
       const d = dur - t.plan.dauer * 1000, dm = Math.round(Math.abs(d) / 60000);
       head = dm < 2 ? 'Fast genau wie geplant' : d > 0 ? `${dm} min länger als geplant` : `${dm} min schneller als geplant`;
       sub = `${esc(t.plan.name)} · geplant ${hm(t.plan.dauer)}, gebraucht ${hm(dur / 1000)}`;
+    } else if (transit) {
+      head = `${hm(dur / 1000)}, davon ${durText(stopT)} an Haltestellen und ${durText(wait)} an Ampeln`;
+      sub = `${stops.length} Halt${stops.length === 1 ? '' : 'e'} an Haltestellen, ${halts.length} an Ampeln, ${passes} Ampel${passes === 1 ? '' : 'n'} ohne Halt · ${fmtNum(t.distance / 1000, 1)} km`;
     } else {
       head = `${hm(dur / 1000)}, davon ${durText(wait)} an Ampeln`;
       sub = `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, ${passes} ohne Halt · ${fmtNum(t.distance / 1000, 1)} km`;
     }
     $('#h-review').textContent = head;
-    const slow = t.mode === 'fuss' ? 0 : Math.max(0, slowMs(t) - wait);
-    const flow = Math.max(0, dur - slow - wait), all = Math.max(1, flow + slow + wait);
+    const slow = t.mode === 'fuss' ? 0 : Math.max(0, slowMs(t) - wait - stopT);
+    const flow = Math.max(0, dur - slow - wait - stopT), all = Math.max(1, flow + slow + wait + stopT);
     const pc = (x) => (x / all * 100).toFixed(1) + '%';
     $('#review-head').innerHTML = `<p class="st-sub">${sub}</p>
-      <div class="rh-bar" role="img" aria-label="${esc(`${hmSay(dur / 1000)}, davon etwa ${hmSay(slow / 1000)} langsam oder im Stau und ${hmSay(wait / 1000)} an Ampeln`)}"><span style="width:${pc(flow)}"></span><span class="slow" style="width:${pc(slow)}"></span><span class="amp" style="width:${pc(wait)}"></span></div>
-      <ul class="pl-legend row-legend">${slow >= 60000 ? `<li><span class="lg-dot red"></span>etwa ${Math.round(slow / 60000)} min langsam oder Stau</li>` : ''}<li><span class="lg-dot"></span>${durText(wait)} an Ampeln</li></ul>`;
+      <div class="rh-bar" role="img" aria-label="${esc(`${hmSay(dur / 1000)}, davon ${transit ? `${hmSay(stopT / 1000)} an Haltestellen, ` : ''}etwa ${hmSay(slow / 1000)} langsam oder im Stau und ${hmSay(wait / 1000)} an Ampeln`)}"><span style="width:${pc(flow)}"></span>${transit ? `<span class="stop" style="width:${pc(stopT)}"></span>` : ''}<span class="slow" style="width:${pc(slow)}"></span><span class="amp" style="width:${pc(wait)}"></span></div>
+      <ul class="pl-legend row-legend">${transit ? `<li><span class="lg-dot stop"></span>${durText(stopT)} an Haltestellen</li>` : ''}${slow >= 60000 ? `<li><span class="lg-dot red"></span>etwa ${Math.round(slow / 60000)} min langsam oder Stau</li>` : ''}<li><span class="lg-dot"></span>${durText(wait)} an Ampeln</li></ul>`;
   }
   function renderBilanz() {
     const t = reviewTrip;

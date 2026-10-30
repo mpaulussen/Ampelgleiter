@@ -443,6 +443,7 @@ body[data-view="drive"] main{padding-bottom:env(safe-area-inset-bottom,0px)}
 .rh-bar span{display:block;height:100%;background:color-mix(in srgb,var(--muted) 35%,var(--surface))}
 .rh-bar .slow{background:var(--bad)}
 .rh-bar .amp{background:var(--amber)}
+.rh-bar .stop,.pl-seg.stop,.lg-dot.stop{background:var(--w-vor-acc)}
 .row-legend{flex-direction:row;flex-wrap:wrap;gap:6px 18px;font-size:15px}
 .ask-title{font-size:19px;margin:6px 0 -6px}
 #review-more{background:var(--surface)}
