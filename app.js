@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.21.0';
+  const VERSION = '0.21.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -70,7 +70,7 @@
     { id: 'night', label: 'Abends und nachts (19–6 Uhr)' },
     { id: 'weekend', label: 'Wochenende 6–19 Uhr' }
   ];
-  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  const OVERPASS = ['https://overpass-api.de/api/interpreter'];   // FOSSGIS e.V., Deutschland
 
   // ---------- Speicher ----------
   const store = {
