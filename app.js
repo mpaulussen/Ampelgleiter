@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.21.3';
+  const VERSION = '0.21.4';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1872,7 +1872,9 @@
     };
     const [ca, cb] = ends.map((p) => nearest(p, true));
     const plain = ends.map((p) => nearest(p, false)).filter(Boolean);
-    const street = plain.length ? plain[0].replace(/\s+\d+\s*[a-z]?$/i, '') : null;
+    // „Detmolder Straße 258“ hat eine Hausnummer, „B 61“ oder „A 2“ nicht: davor muss ein Wort stehen
+    const houseNo = (n) => n.match(/^(.*[A-Za-zÄÖÜäöüß]{3,}.*?)\s+(\d+\s*[a-z]?)$/);
+    const street = plain.length ? (houseNo(plain[0]) || [0, plain[0]])[1] : null;
     if (ca && cb && ca !== cb) {
       const pa = ca.split(' / '), pb = cb.split(' / '), common = pa.find((x) => pb.includes(x));
       const oa = pa.find((x) => x !== common), ob = pb.find((x) => x !== common);
@@ -1884,7 +1886,7 @@
       return street && parts.includes(street) ? `${street} bei ${parts.find((x) => x !== street)}` : `Kreuzung ${c}`;
     }
     if (street) {
-      const num = plain.map((n) => (n.match(/\s(\d+\s*[a-z]?)$/i) || [])[1]).find(Boolean);
+      const num = plain.map((n) => (houseNo(n) || [])[2]).find(Boolean);
       return num ? `${street} bei Nr. ${num}` : street;
     }
     return 'Abschnitt auf deinem Weg';
