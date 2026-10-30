@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.18.0';
+  const VERSION = '0.18.1';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1800,12 +1800,14 @@
     const d = r.data, route = d.pts.map((p) => p.join(',')).join(';');
     const verzug = d.dauer - d.basis;
     const sum = `<div class="vf-sum"><b class="vf-dur">${hm(d.dauer)}</b><span class="small muted">${group === 'rad' ? 'mit dem Rad' : verzug >= 120 ? `heute +${Math.round(verzug / 60)} min Verkehr` : 'kaum Verkehr'} · ${fmtNum(d.km, 0)} km${r.fallback ? ' · Start: Bielefeld' : ''}</span></div>`;
-    const items = d.items.slice().sort((a, b) => LAGE_RANK[a.art] - LAGE_RANK[b.art] || (b.delay || 0) - (a.delay || 0));
+    // in Fahrtreihenfolge, damit man die Strecke von vorn nach hinten liest
+    const items = d.items.slice().sort((a, b) => (a.km != null && b.km != null ? a.km - b.km : 0) || LAGE_RANK[a.art] - LAGE_RANK[b.art]);
+    const extra = (it) => (it.art !== 'zaeh' && it.text && it.text.length > 14 && it.text.toLowerCase() !== LAGE_LABEL[it.art].toLowerCase() ? it.text : '');
     const btn = (it) => `<button type="button" class="place" data-peek="l" data-name="${esc(it.titel)}" data-art="${it.art}" data-lines="${it.pts.map((q) => q.join(',')).join(';')}" data-pts="${route}">${esc(it.titel)}</button>`;
     const rows = items.length
-      ? `<ul class="lg-list">${items.slice(0, 4).map((it) => lageRow(it.art, btn(it), [LAGE_LABEL[it.art], delayText(it.delay), it.km != null ? `nach ${it.km} km` : '', it.richtungText].filter(Boolean).map(esc).join(' · '), it.art !== 'zaeh' ? it.text : '')).join('')}</ul>${items.length > 4 ? `<p class="small muted">und ${items.length - 4} weitere, alle auf der Karte</p>` : ''}`
+      ? `<ul class="lg-list">${items.slice(0, 4).map((it) => lageRow(it.art, btn(it), [it.km != null ? `nach ${it.km} km` : '', LAGE_LABEL[it.art], delayText(it.delay), it.richtungText && !/Richtung/.test(it.titel) ? it.richtungText : ''].filter(Boolean).map(esc).join(' · '), extra(it))).join('')}</ul>${items.length > 4 ? `<p class="small muted">und ${items.length - 4} weitere, alle auf der Karte</p>` : ''}`
       : `<p class="vf-line ok">${ic('check')}<span>Keine Meldungen entlang der Strecke</span></p>`;
-    const alt = d.alternative ? `<p class="note">${ic('route')}<span>Andere Strecke${d.alternative.strassen.length ? ' über ' + esc(d.alternative.strassen.join(', ')) : ''}: etwa ${Math.round((d.dauer - d.alternative.dauer) / 60)} min schneller.</span></p>` : '';
+    const alt = d.alternative ? `<p class="tip">${ic('route')}<span>Ausweichen${d.alternative.strassen.length ? ' über ' + esc(d.alternative.strassen.join(', ')) : ''}: etwa ${Math.round((d.dauer - d.alternative.dauer) / 60)} min schneller</span></p>` : '';
     let bars = '';
     if (d.abfahrt && d.abfahrt.length > 1) {
       const ds = d.abfahrt.map((a) => a.dauer), lo = Math.min(...ds), hi = Math.max(...ds);
@@ -1818,7 +1820,7 @@
     }
     const all = `<button type="button" class="btn quiet" data-peek="l" data-name="${esc(z.name)}" data-art="stau" data-lines="${items.map((it) => it.pts.map((q) => q.join(',')).join(';')).join('|')}" data-arts="${items.map((it) => it.art).join('|')}" data-pts="${route}">${ic('map')}Strecke auf der Karte</button>`;
     const foot = `<p class="small muted lg-src">Stand ${clock(d.t)} Uhr · ${esc(lageSrc(['HERE'].concat(d.items.some((it) => it.quelle === 'Autobahn GmbH') ? ['Autobahn GmbH'] : [])))} · <button type="button" class="btn-link" data-vf="again">neu prüfen</button></p>`;
-    return `<div class="vf-panel">${head}${sum}${rows}${alt}${bars}${all}${foot}</div>`;
+    return `<div class="vf-panel">${head}${sum}${alt}${rows}${bars}${all}${foot}</div>`;
   }
   function myStart() {
     return new Promise((resolve) => {

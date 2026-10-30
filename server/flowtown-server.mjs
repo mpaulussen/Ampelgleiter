@@ -287,6 +287,7 @@ async function readLage() {
 // Nur auf Knopfdruck. Der Start kommt auf etwa 1 km gerundet an, gespeichert wird nichts außer einem kurzen Zwischenspeicher.
 const ROUTER_URL = process.env.HERE_ROUTER_URL || 'https://router.hereapi.com/v8/routes';
 const GEOCODE_URL = process.env.HERE_GEOCODE_URL || 'https://geocode.search.hereapi.com/v1/geocode';
+const REVGEO_URL = process.env.HERE_REVGEO_URL || 'https://revgeocode.search.hereapi.com/v1/revgeocode';
 const ZIEL_PER_DAY = Number(process.env.ZIEL_PER_DAY || 40);
 const zielAllowed = limiter(ZIEL_PER_DAY), ortAllowed = limiter(ZIEL_PER_DAY);
 
@@ -335,13 +336,13 @@ function nearRoute(p, route) {
   }
   return best;
 }
-// Liegt eine Meldung auf der Strecke, und zwar in Fahrtrichtung?
+// Liegt eine Meldung auf der Strecke, und zwar in Fahrtrichtung? Eng gefasst, damit Nebenstraßen und Auffahrten draußen bleiben.
 function onRoute(it, route, tol) {
   const near = it.pts.map((q) => Object.assign({ q }, nearRoute(q, route))).filter((m) => m.d <= tol);
-  if (!near.length) return null;
-  if (it.richtung && near.length >= 2) {
+  if (!near.length || (it.pts.length > 1 && near.length < Math.min(2, it.pts.length))) return null;
+  if (near.length >= 2) {
     const a = near[0].q, b = near[near.length - 1].q;
-    if ((Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1])) > 0.0002 && angGap(brg(a, b), near[0].h) > 60) return null;   // Gegenrichtung
+    if ((Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1])) > 0.0002 && angGap(brg(a, b), near[0].h) > 45) return null;   // Gegenrichtung oder Querstraße
   }
   return near[0].i;
 }
@@ -356,21 +357,70 @@ function boxesAlong(route) {
   if (box) boxes.push(box);
   return boxes.map((b) => [b[0] - 0.01, b[1] - 0.01, b[2] + 0.01, b[3] + 0.01]);
 }
+const txt = (v) => (v == null ? '' : typeof v === 'string' ? v : v.value || '');
+// Strecke von HERE: Geometrie, Straßennummern und -namen je Abschnitt, Störungen, die auf genau dieser Strecke liegen
 async function hereRoute(from, to, mode, opts) {
   const q = new URLSearchParams({ transportMode: mode === 'rad' ? 'bicycle' : 'car', origin: from.join(','), destination: to.join(','), apiKey: HERE_KEY });
-  if (opts.full) { q.set('return', 'summary,polyline,typicalDuration'); q.set('spans', 'routeNumbers'); if (mode !== 'rad') q.set('alternatives', '1'); }
+  if (opts.full) { q.set('return', 'summary,polyline,typicalDuration,incidents'); q.set('spans', 'routeNumbers,names,incidents'); q.set('lang', 'de-DE'); if (mode !== 'rad') q.set('alternatives', '1'); }
   else q.set('return', 'summary');
   if (opts.at) q.set('departureTime', opts.at);
   const j = await getJson(`${ROUTER_URL}?${q}`, 12000);
   return (j.routes || []).map((r) => {
     const secs = r.sections || [];
     const sum = (k) => secs.reduce((a, x) => a + (Number(x.summary && x.summary[k]) || 0), 0);
-    const pts = opts.full ? [].concat(...secs.map((x) => (x.polyline ? decodeFlex(x.polyline) : []))) : [];
-    const roads = [];
-    for (const x of secs) for (const sp of x.spans || []) for (const rn of sp.routeNumbers || []) { const v = String(rn.value || rn || '').replace(/\s+/g, ''); if (v && !roads.includes(v)) roads.push(v); }
-    return { dauer: sum('duration'), basis: sum('baseDuration') || sum('typicalDuration') || sum('duration'), m: sum('length'), pts, roads };
+    const pts = [], spans = [], roads = [];
+    let incs = null;
+    if (opts.full) {
+      for (const x of secs) {
+        const base = pts.length;
+        const sp = x.polyline ? decodeFlex(x.polyline) : [];
+        pts.push(...sp);
+        for (const s of x.spans || []) {
+          const num = (s.routeNumbers || []).map((n) => txt(n).replace(/\s+/g, '')).find(Boolean) || '';
+          const name = (s.names || []).map(txt).find(Boolean) || '';
+          spans.push({ i: base + (Number(s.offset) || 0), num, name, inc: Array.isArray(s.incidents) ? s.incidents : [] });
+          if (num && !roads.includes(num)) roads.push(num);
+        }
+        if (Array.isArray(x.incidents)) {
+          incs = incs || [];
+          const spx = spans.filter((s) => s.i >= base);
+          x.incidents.forEach((d, k) => {
+            const mine = spx.filter((s) => s.inc.includes(k));
+            const i0 = mine.length ? mine[0].i : null;
+            const last = mine.length ? spans[spans.indexOf(mine[mine.length - 1]) + 1] : null;
+            const i1 = last ? last.i : i0 != null ? Math.min(pts.length - 1, i0 + 1) : null;
+            incs.push({ d, i0, i1 });
+          });
+        }
+      }
+    }
+    return { dauer: sum('duration'), basis: sum('baseDuration') || sum('typicalDuration') || sum('duration'), m: sum('length'), pts, spans, roads, incs };
   });
 }
+// Ort zu einem Punkt (für „A2 bei Kamen“), einen Tag zwischengespeichert
+const ortCache = new Map();
+async function placeNear(p) {
+  const key = p.map((x) => (Math.round(x * 50) / 50).toFixed(2)).join(',');
+  const c = ortCache.get(key);
+  if (c && Date.now() - c.t < 864e5) return c.v;
+  let v = '';
+  try {
+    const jj = await getJson(`${REVGEO_URL}?${new URLSearchParams({ at: p.join(','), lang: 'de-DE', apiKey: HERE_KEY })}`, 6000);
+    const a = (jj.items && jj.items[0] && jj.items[0].address) || {};
+    v = a.city || a.county || '';
+  } catch (e) { /* ohne Ortsnamen weiter */ }
+  ortCache.set(key, { t: Date.now(), v });
+  if (ortCache.size > 5000) ortCache.delete(ortCache.keys().next().value);
+  return v;
+}
+// „A2 | AS Kamen-Zentrum (15) - AS Unna (16)“ → „A2 zwischen Kamen-Zentrum und Unna“
+function abTitle(t) {
+  const [road, rest] = String(t).split('|').map((s) => s.trim());
+  if (!rest) return t;
+  const ends = rest.split(/\s+-\s+/).map((s) => s.replace(/^(AS|AK|AD|Kreuz|Dreieck|Anschlussstelle)\s+/i, '').replace(/\s*\(\d+[a-z]?\)\s*$/i, '').trim());
+  return ends.length === 2 ? `${road} zwischen ${ends[0]} und ${ends[1]}` : `${road} bei ${ends[0]}`;
+}
+const HERE_TYP = Object.assign({}, HERE_ART, { congestion: 'stau', accident: 'unfall' });
 // Abfahrtszeiten: jetzt, dann volle und halbe Stunden ab einer Viertelstunde von jetzt
 function slots(now) {
   const t = new Date(now + 15 * 60000);
@@ -385,23 +435,48 @@ async function checkZiel(from, to, mode) {
   if (hit && Date.now() - hit.t < 180000) return hit.v;
   const [main, ...alts] = await hereRoute(from, to, mode, { full: true });
   if (!main || main.pts.length < 2) throw Object.assign(new Error('Keine Strecke gefunden'), { status: 404 });
-  const route = main.pts.filter((p, k) => k % 3 === 0 || k === main.pts.length - 1);   // reicht für den Abgleich
-  // Meldungen: HERE entlang der Strecke, Autobahn GmbH für die Autobahnen darauf
-  const jobs = boxesAlong(route).map((b) => hereIncidents(b));
+  const P = main.pts;
+  const cum = [0];
+  for (let k = 1; k < P.length; k++) cum.push(cum[k - 1] + segDist(P[k], P[k - 1], P[k - 1]));
+  const roadAt = (i) => { let s = null; for (const x of main.spans) { if (x.i <= i) s = x; else break; } return s || {}; };
+  const keep = (art) => mode !== 'rad' || ['sperrung', 'baustelle', 'unfall'].includes(art);
+  const items = [];
+  // 1. Störungen, die HERE selbst der Strecke zuordnet
+  if (main.incs) {
+    main.incs.forEach(({ d, i0, i1 }, k) => {
+      const art = d.roadClosed || d.type === 'roadClosure' ? 'sperrung' : HERE_TYP[d.type] || 'warnung';
+      if (i0 == null || !keep(art)) return;
+      items.push({ id: 'ri' + String(d.id || k).slice(-16), quelle: 'HERE', art, at: i0, text: clip(txt(d.description) || txt(d.summary), 220), bis: d.validUntil || d.endTime || null, pts: thin(P.slice(i0, Math.max(i0 + 1, i1) + 1)) });
+    });
+  }
+  // 2. ohne Zuordnung von HERE: Störungen im Umkreis, eng auf die Strecke gelegt
+  const jobs = main.incs ? [] : boxesAlong(P.filter((p, k) => k % 3 === 0)).map((b) => hereIncidents(b));
   const autobahns = main.roads.filter((r) => /^A\d{1,3}$/.test(r)).slice(0, 8);
+  const nJobs = jobs.length;
   jobs.push(...autobahns.map(abRoad));
-  const items = [], seen = new Set();
-  for (const r of await Promise.allSettled(jobs)) {
-    if (r.status !== 'fulfilled') continue;
+  const seen = new Set(items.map((x) => x.id));
+  (await Promise.allSettled(jobs)).forEach((r, n) => {
+    if (r.status !== 'fulfilled') return;
     for (const it of r.value) {
-      if (seen.has(it.id)) continue;
-      if (mode === 'rad' && !['sperrung', 'baustelle', 'unfall'].includes(it.art)) continue;
-      const at = onRoute(it, route, it.quelle === 'Autobahn GmbH' && it.pts.length === 1 ? 300 : 120);
+      if (seen.has(it.id) || !keep(it.art)) continue;
+      const fromAb = n >= nJobs;
+      if (fromAb && main.incs && !['sperrung', 'stau'].includes(it.art)) continue;   // Baustellen meldet HERE schon auf der Strecke
+      const at = onRoute(it, P, fromAb && it.pts.length === 1 ? 60 : 30);
       if (at == null) continue;
       seen.add(it.id);
-      items.push(Object.assign({ km: Math.round(route.slice(0, at + 1).reduce((a, p, k, arr) => a + (k ? segDist(p, arr[k - 1], arr[k - 1]) : 0), 0) / 1000) }, it));
+      items.push(Object.assign({}, it, { at, titel: fromAb ? abTitle(it.titel) : null }));
     }
-  }
+  });
+  // Straße und Ort benennen: „A2 bei Kamen“, sortiert nach Schwere und Lage
+  const RANK = { sperrung: 0, stau: 1, unfall: 2, zaeh: 3, baustelle: 4, warnung: 5 };
+  items.sort((a, b) => RANK[a.art] - RANK[b.art] || a.at - b.at);
+  await Promise.all(items.slice(0, 8).map(async (it) => {
+    if (it.titel) return;
+    const rd = roadAt(it.at), town = await placeNear(P[it.at]);
+    const road = rd.num || rd.name || '';
+    it.titel = clip(road && town ? (rd.num ? `${road} bei ${town}` : `${road}, ${town}`) : road || town || it.text || 'Meldung', 60);
+  }));
+  for (const it of items) { if (!it.titel) it.titel = clip(roadAt(it.at).num || roadAt(it.at).name || it.text || 'Meldung', 60); it.km = Math.round(cum[it.at] / 1000); delete it.at; }
   // Abfahrtsleiste (nur Auto): jetzt plus vier Zeiten, mit HEREs Vorhersage
   let abfahrt = null;
   if (mode !== 'rad') {
