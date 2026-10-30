@@ -1,4 +1,4 @@
-// Flowtown-Server: Ebene „Wir“, KI-Einschätzung über Mistral, Meldungen. Ohne Abhängigkeiten, Node 18 oder neuer.
+// Flowtown-Server: Ebene „Wir“, KI-Einschätzung über Mistral, Meldungen, Verkehrslage. Ohne Abhängigkeiten, Node 18 oder neuer.
 // Gespeichert werden nur zusammengefasste Werte je Ampel, Richtung und Zeitfenster, nie Fahrten, Orte oder Uhrzeiten.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -143,6 +143,129 @@ function readNews() {
   return readJson(NEWS_FILE, []).filter((n) => n && n.titel && (!n.von || n.von <= today) && (!n.bis || n.bis >= today));
 }
 
+// ---------- Verkehrslage vor der Fahrt ----------
+// Geholt wird höchstens alle LAGE_MIN Minuten und nur, wenn jemand fragt, immer für das ganze Gebiet.
+// Jede App bekommt dasselbe Gesamtbild und prüft auf dem Gerät, was ihre Wege betrifft. Der Server erfährt keine Wege.
+const HERE_KEY = process.env.HERE_API_KEY || '';
+const HERE_URL = process.env.HERE_URL || 'https://data.traffic.hereapi.com/v7';
+const AUTOBAHN_URL = process.env.AUTOBAHN_URL || 'https://verkehr.autobahn.de/o/autobahn';
+const LAGE_BBOX = (process.env.LAGE_BBOX || '8.38,51.90,8.70,52.12').split(',').map(Number);   // West, Süd, Ost, Nord: Bielefeld
+const LAGE_ROADS = (process.env.LAGE_ROADS || 'A2,A33').split(',').map((s) => s.trim()).filter((s) => /^[A-Z]\d{1,4}$/.test(s));
+const LAGE_MIN = Number(process.env.LAGE_MIN || 5);
+
+async function getJson(url, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms || 10000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json', 'User-Agent': 'Flowtown/1.0' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+const r5 = (x) => Math.round(x * 1e5) / 1e5;
+const inBox = (lat, lon, m) => lon >= LAGE_BBOX[0] - m && lon <= LAGE_BBOX[2] + m && lat >= LAGE_BBOX[1] - m && lat <= LAGE_BBOX[3] + m;
+// höchstens 24 Punkte je Abschnitt, erster und letzter bleiben
+function thin(pts) {
+  const ok = pts.filter((p) => isFinite(p[0]) && isFinite(p[1])).map((p) => [r5(p[0]), r5(p[1])]);
+  if (ok.length <= 24) return ok;
+  const step = (ok.length - 1) / 23;
+  return Array.from({ length: 24 }, (_, i) => ok[Math.round(i * step)]);
+}
+const herePts = (loc) => thin([].concat(...((loc && loc.shape && loc.shape.links) || []).map((l) => (l.points || []).map((q) => [q.lat, q.lng]))));
+const kmh = (ms) => Math.round(ms * 3.6);
+const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
+// HERE Verkehrsfluss: nur Abschnitte, auf denen es hakt (Jam-Faktor ab 4 von 10), Richtung zählt
+async function hereFlow() {
+  const j = await getJson(`${HERE_URL}/flow?in=bbox:${LAGE_BBOX.join(',')}&locationReferencing=shape&minJamFactor=4&apiKey=${encodeURIComponent(HERE_KEY)}`);
+  const out = [];
+  for (const r of j.results || []) {
+    const cf = r.currentFlow || {}, loc = r.location || {};
+    const pts = herePts(loc);
+    if (pts.length < 2) continue;
+    const len = Number(loc.length) || 0;
+    const spd = Number(cf.speedUncapped != null ? cf.speedUncapped : cf.speed), ff = Number(cf.freeFlow);
+    const closed = cf.traversability === 'closed';
+    const delay = !closed && spd > 0.3 && ff > spd ? Math.round(len / spd - len / ff) : null;
+    if (!closed && (delay == null || delay < 10)) continue;   // kurze Abschnitte mit wenigen Sekunden Verlust sind Rauschen
+    out.push({
+      id: 'hf' + crypto.createHash('sha1').update(JSON.stringify(pts[0]) + JSON.stringify(pts[pts.length - 1])).digest('hex').slice(0, 10),
+      quelle: 'HERE', art: closed ? 'sperrung' : cf.jamFactor >= 8 ? 'stau' : 'zaeh', richtung: true,
+      titel: clip(loc.description || 'Straße', 60), text: closed ? 'gesperrt' : `Ø ${kmh(spd)} km/h statt ${kmh(ff)} km/h`, delay, pts
+    });
+  }
+  return out;
+}
+const HERE_ART = { accident: 'unfall', congestion: 'stau', construction: 'baustelle', roadClosure: 'sperrung', laneRestriction: 'baustelle', disabledVehicle: 'warnung', roadHazard: 'warnung', plannedEvent: 'warnung', weather: 'warnung', massTransit: 'warnung', other: 'warnung' };
+async function hereIncidents() {
+  const j = await getJson(`${HERE_URL}/incidents?in=bbox:${LAGE_BBOX.join(',')}&locationReferencing=shape&lang=de-DE&apiKey=${encodeURIComponent(HERE_KEY)}`);
+  const out = [];
+  for (const r of j.results || []) {
+    const d = r.incidentDetails || {}, loc = r.location || {};
+    const pts = herePts(loc);
+    if (!pts.length) continue;
+    const sum = d.summary && d.summary.value, desc = d.description && d.description.value;
+    out.push({
+      id: 'hi' + String(d.id || d.originalId || out.length).slice(-16), quelle: 'HERE',
+      art: d.roadClosed ? 'sperrung' : HERE_ART[d.type] || 'warnung',
+      titel: clip(loc.description || sum || 'Meldung', 60), text: clip(desc || sum || '', 220), bis: d.endTime || null, pts
+    });
+  }
+  return out;
+}
+// Autobahn GmbH des Bundes: Warnungen, Sperrungen, Baustellen auf den Autobahnen rund um Bielefeld (offen, ohne Schlüssel)
+const AB_SVC = { warning: 'warnung', closure: 'sperrung', roadworks: 'baustelle' };
+async function autobahn() {
+  const jobs = [];
+  for (const road of LAGE_ROADS) for (const svc of Object.keys(AB_SVC)) jobs.push(getJson(`${AUTOBAHN_URL}/${road}/services/${svc}`).then((j) => ({ svc, list: j[svc] || [] })));
+  const done = await Promise.allSettled(jobs);
+  if (done.length && done.every((r) => r.status === 'rejected')) throw new Error('nicht erreichbar: ' + done[0].reason.message);
+  const out = [];
+  for (const res of done) {
+    if (res.status !== 'fulfilled') continue;
+    for (const x of res.value.list) {
+      if (!x || x.future || x.display_type === 'WEIGHT_LIMIT_35') continue;
+      const lat = Number(x.coordinate && x.coordinate.lat), lon = Number(x.coordinate && x.coordinate.long);
+      if (!inBox(lat, lon, 0.05)) continue;
+      const geo = x.geometry && x.geometry.type === 'LineString' && Array.isArray(x.geometry.coordinates) ? x.geometry.coordinates.map((c) => [c[1], c[0]]) : [];
+      const pts = thin(geo.length ? geo : [[lat, lon]]);
+      let art = AB_SVC[res.value.svc];
+      if (art === 'warnung' && /STATIONARY|QUEUING|SLOW/.test(x.abnormalTrafficType || '')) art = 'stau';
+      const lines = (x.description || []).map(String).filter((s) => s.trim() && !/^(Beginn|Ende):/.test(s));
+      const delay = Number(x.delayTimeValue) > 0 ? Number(x.delayTimeValue) * 60 : null;
+      out.push({
+        id: 'ab' + String(x.identifier || '').slice(-16), quelle: 'Autobahn GmbH', art,
+        titel: clip(x.title || 'Autobahn', 60), richtungText: clip(x.subtitle || '', 60), text: clip(lines.join(' '), 220), delay, pts
+      });
+    }
+  }
+  return out;
+}
+
+const lage = { here: { items: [], t: 0 }, autobahn: { items: [], t: 0 } };
+let lageAt = 0, lageRun = null;
+async function refreshLage() {
+  const jobs = { autobahn: autobahn() };
+  if (HERE_KEY) jobs.here = Promise.all([hereFlow(), hereIncidents()]).then(([a, b]) => a.concat(b));
+  for (const [name, job] of Object.entries(jobs)) {
+    try { lage[name] = { items: await job, t: Date.now() }; }
+    catch (e) { console.error(new Date().toISOString(), 'Lage', name, e.message); }   // ältere Werte bleiben bis 30 Minuten stehen
+  }
+  lageAt = Date.now();
+}
+async function readLage() {
+  if (Date.now() - lageAt > LAGE_MIN * 60000) {
+    lageRun = lageRun || refreshLage().finally(() => { lageRun = null; });
+    await lageRun;
+  }
+  const fresh = Object.entries(lage).filter(([, v]) => v.t && Date.now() - v.t < 30 * 60000);
+  return {
+    t: Math.min(...fresh.map(([, v]) => v.t).concat(lageAt || Date.now())),
+    quellen: fresh.map(([k, v]) => ({ name: k === 'here' ? 'HERE' : 'Autobahn GmbH', t: v.t })),
+    items: [].concat(...fresh.map(([, v]) => v.items))
+  };
+}
+
 // ---------- HTTP ----------
 function send(res, status, obj, origin) {
   const h = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Origin' };
@@ -166,7 +289,7 @@ const server = http.createServer(async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   try {
     if (req.method === 'OPTIONS') return send(res, 204, null, origin);
-    if (req.method === 'GET' && p === '/api/health') return send(res, 200, { ok: true, ki: !!MISTRAL_KEY, modell: MISTRAL_MODEL, kMin: K_MIN }, origin);
+    if (req.method === 'GET' && p === '/api/health') return send(res, 200, { ok: true, ki: !!MISTRAL_KEY, modell: MISTRAL_MODEL, kMin: K_MIN, lage: { here: !!HERE_KEY, autobahn: LAGE_ROADS } }, origin);
     if (req.method === 'POST' && p === '/api/wir') return send(res, 200, { ok: true, n: addWir(await readBody(req, 64 * 1024)) }, origin);
     if (req.method === 'GET' && p === '/api/wir') {
       const ids = (url.searchParams.get('s') || '').split(',').filter((s) => /^c\d{1,13}$/.test(s)).slice(0, 400);
@@ -177,6 +300,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req, 48 * 1024);
       return send(res, 200, await askMistral(body.facts || {}), origin);
     }
+    if (req.method === 'GET' && p === '/api/lage') return send(res, 200, await readLage(), origin);
     if (req.method === 'GET' && p === '/api/news') return send(res, 200, { meldungen: readNews() }, origin);
     return send(res, 404, { fehler: 'unbekannt' }, origin);
   } catch (e) {
@@ -185,4 +309,4 @@ const server = http.createServer(async (req, res) => {
     return send(res, status, { fehler: status >= 500 ? 'Serverfehler' : e.message }, origin);
   }
 });
-server.listen(PORT, HOST, () => console.log(`Flowtown-Server auf ${HOST}:${PORT}, KI ${MISTRAL_KEY ? 'an (' + MISTRAL_MODEL + ')' : 'aus'}`));
+server.listen(PORT, HOST, () => console.log(`Flowtown-Server auf ${HOST}:${PORT}, KI ${MISTRAL_KEY ? 'an (' + MISTRAL_MODEL + ')' : 'aus'}, Verkehrslage: Autobahn ${LAGE_ROADS.join('/')}${HERE_KEY ? ' + HERE' : ''}`));

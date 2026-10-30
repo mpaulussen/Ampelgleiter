@@ -200,10 +200,12 @@
       </label>
       <p class="small muted" id="server-status" role="status" aria-live="polite"></p>
       <label class="check"><input type="checkbox" id="inp-wir"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg> Fahrten anonym beitragen</label>
+      <label class="check"><input type="checkbox" id="inp-lage"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg> Verkehrslage vor der Fahrt</label>
       <label class="check"><input type="checkbox" id="inp-ki"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg> KI-Einschätzung erlauben</label>
       <details class="more-info"><summary><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Was wird gesendet?</summary>
         <ul class="ilist small">
           <li><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span><b>Beitragen:</b> je Ampel nur Richtung, Zeitfenster und Wartezeit. Keine Uhrzeiten, kein Start, kein Ziel. Werte anderer erscheinen ab fünf Personen.</span></li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><span><b>Verkehrslage:</b> Die App lädt die Lage für ganz Bielefeld und prüft auf dem Handy, was deine Wege betrifft. Über dich wird dabei nichts gesendet.</span></li>
           <li><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span><b>KI:</b> auf Knopfdruck zusammengefasste Werte an Mistral (EU), etwa Wartezeiten und Ampelnamen. Keine Koordinaten, nichts wird gespeichert.</span></li>
         </ul></details>
       <button id="btn-server-test" class="btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Verbindung prüfen</button>

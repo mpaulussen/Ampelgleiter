@@ -265,3 +265,15 @@ details.hints[open] .ilist{margin-top:4px}
 .more-info[open] summary{margin-bottom:6px}
 details.hints summary.card-head{color:inherit;min-height:0}
 .t-sub span{white-space:nowrap}
+/* Verkehrslage vor der Fahrt */
+.lg-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.lg{display:flex;gap:10px;align-items:flex-start}
+.lg>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.lg-dot{width:12px;height:12px;border-radius:50%;margin-top:5px;flex:none;background:var(--amber)}
+.lg.red .lg-dot{background:var(--bad)}
+.lg-text{color:var(--fg);line-height:1.35}
+.lg-src{margin:8px 0 0}
+.lage.ok{padding-top:12px;padding-bottom:12px}
+.lg-ok{display:flex;gap:10px;align-items:center;color:var(--accent)}
+.lg-ok span{color:inherit}
+.lg-ok b{font-weight:700}

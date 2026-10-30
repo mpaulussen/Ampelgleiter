@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.16.0';
+  const VERSION = '0.17.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1241,12 +1241,15 @@
   function openPeek(btn) {
     const dlg = $('#map-peek');
     $('#peek-title').textContent = btn.dataset.name || '';
-    const pts = btn.dataset.peek === 'r'
-      ? btn.dataset.pts.split(';').map((s) => s.split(',').map(Number)).filter((p) => isFinite(p[0]) && isFinite(p[1]))
-      : [[Number(btn.dataset.lat), Number(btn.dataset.lon)]];
-    $('#peek-meta').textContent = btn.dataset.peek === 'r' ? `${pts.length} Ampeln auf diesem Weg · grün: erste, rot: letzte Ampel` : 'Ampel, an der du gewartet hast';
+    const parse = (str) => (str || '').split(';').map((s) => s.split(',').map(Number)).filter((p) => isFinite(p[0]) && isFinite(p[1]));
+    const kind = btn.dataset.peek;
+    const pts = kind === 'r' ? parse(btn.dataset.pts) : kind === 'l' ? [] : [[Number(btn.dataset.lat), Number(btn.dataset.lon)]];
+    const parts = kind === 'l' ? (btn.dataset.lines || '').split('|').map(parse).filter((x) => x.length) : [];
+    const route = kind === 'l' ? parse(btn.dataset.pts) : [];
+    $('#peek-meta').textContent = kind === 'r' ? `${pts.length} Ampeln auf diesem Weg · grün: erste, rot: letzte Ampel`
+      : kind === 'l' ? `${LAGE_LABEL[btn.dataset.art] || 'Meldung'} · farbig: betroffener Abschnitt, grün gestrichelt: dein Weg` : 'Ampel, an der du gewartet hast';
     if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
-    if (typeof L === 'undefined' || !pts.length) { $('#peek-meta').textContent = 'Die Karte braucht eine Internetverbindung.'; return; }
+    if (typeof L === 'undefined' || !(pts.length || parts.length)) { $('#peek-meta').textContent = 'Die Karte braucht eine Internetverbindung.'; return; }
     if (!peekMap) {
       peekMap = L.map('peek-map', { zoomControl: true, attributionControl: true });
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap-Mitwirkende' }).addTo(peekMap);
@@ -1254,6 +1257,14 @@
     if (peekLayer) peekLayer.remove();
     peekLayer = L.layerGroup().addTo(peekMap);
     const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1a7f52';
+    if (kind === 'l') {
+      const col = LAGE_CLS[btn.dataset.art] === 'red' ? '#d64933' : '#e0a326';
+      if (route.length > 1) L.polyline(route, { color: accent, weight: 3, opacity: 0.6, dashArray: '6 6' }).addTo(peekLayer);
+      for (const p of parts) if (p.length > 1) L.polyline(p, { color: col, weight: 7, opacity: 0.9 }).addTo(peekLayer); else L.circleMarker(p[0], { radius: 9, color: '#ffffff', weight: 2, fillColor: col, fillOpacity: 1 }).addTo(peekLayer);
+      const all = [].concat(...parts);
+      setTimeout(() => { peekMap.invalidateSize(); if (all.length > 1) peekMap.fitBounds(all, { padding: [40, 40], maxZoom: 16 }); else peekMap.setView(all[0], 15); }, 60);
+      return;
+    }
     if (pts.length > 1) L.polyline(pts, { color: accent, weight: 4, opacity: 0.7 }).addTo(peekLayer);
     pts.forEach((p, i) => L.circleMarker(p, { radius: pts.length > 1 && i > 0 && i < pts.length - 1 ? 5 : 9, color: '#ffffff', weight: 2, fillColor: i === pts.length - 1 ? '#d64933' : accent, fillOpacity: 1 }).addTo(peekLayer));
     setTimeout(() => {
@@ -1566,10 +1577,13 @@
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
       : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small muted">Ab zwei Fahrten auf derselben Strecke zeigt Flowtown hier deinen Weg und die beste Abfahrtszeit.</p></div>`];
     const top = computeTips()[0];
+    const lc = lageCard(group);
     if (top) html.unshift(`<button type="button" class="card top-tip" data-goto="tips"><span class="chip amber">${ic('bulb')}</span><span class="tt-text"><span class="meta">Dein Tipp</span>${top.short}</span>${ic('chevron', 'tt-go')}</button>`);
+    if (lc) html.unshift(lc);
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
     $('#today').innerHTML = html.join('');
+    if (lageOn() && Date.now() - lageAt >= 300000) loadLage().then((ok) => { if (ok && !$('#view-start').hidden) renderToday(); });
   }
 
   // ---------- Flowtown-Server: Ebene „Wir“, KI-Einschätzung, Meldungen ----------
@@ -1636,6 +1650,104 @@
     const pts = [];
     for (const t of trips) if (!t.demo) for (const e of t.events) if (e.signal) pts.push(e);
     return newsCache.filter((n) => n.lat == null || n.lon == null || pts.some((q) => dist(q, n) <= (n.radius_m || 300)));
+  }
+
+  // ---------- Verkehrslage vor der Fahrt ----------
+  // Der Server liefert die Lage für ganz Bielefeld; welche Meldungen die eigenen Wege betreffen, prüft nur das Gerät.
+  let lageCache = null, lageAt = 0, lageLoading = false;
+  const lageOn = () => !!apiBase() && settings.server.lage !== false;
+  async function loadLage() {
+    if (!lageOn() || lageLoading || Date.now() - lageAt < 300000) return false;
+    lageLoading = true;
+    try { lageCache = await api('/api/lage'); lageAt = Date.now(); return true; }
+    catch (e) { lageAt = Date.now() - 240000; return false; }   // in einer Minute noch einmal
+    finally { lageLoading = false; }
+  }
+  const LAGE_RANK = { sperrung: 0, stau: 1, unfall: 2, zaeh: 3, baustelle: 4, warnung: 5 };
+  const LAGE_LABEL = { sperrung: 'Sperrung', stau: 'Stau', unfall: 'Unfall', zaeh: 'zäh', baustelle: 'Baustelle', warnung: 'Hinweis' };
+  const LAGE_CLS = { sperrung: 'red', stau: 'red', unfall: 'red', zaeh: 'amber', baustelle: 'amber', warnung: 'amber' };
+  // Rad und zu Fuß: Stau der Autos spielt keine Rolle, Sperrungen und Baustellen schon
+  const LAGE_FOR = { auto: null, oepnv: null, rad: ['sperrung', 'baustelle', 'unfall'], fuss: ['sperrung', 'baustelle'] };
+  // Wege als Linie durch die Ampeln: wiederkehrende Wege und die letzten Fahrten, möglichst mit dem gewählten Verkehrsmittel
+  function lageLines(group) {
+    const real = trips.filter((t) => !t.demo && t.events.filter((e) => e.signal).length >= 2);
+    const mine = real.filter((t) => MODE_GROUP[t.mode] === group);
+    const sigs = (t) => t.events.filter((e) => e.signal);
+    const line = (ts) => {
+      const pool = ts.filter((t) => MODE_GROUP[t.mode] === group).length ? ts.filter((t) => MODE_GROUP[t.mode] === group) : ts;
+      const pts = sigs(pool.reduce((b, x) => (sigs(x).length > sigs(b).length ? x : b), pool[0]));
+      return { name: `${labelFor(pts[0])} → ${labelFor(pts[pts.length - 1])}`, pts };
+    };
+    const base = mine.length ? mine : real;
+    const routes = findRoutes(real).filter((g) => g.trips.some((t) => base.includes(t)));
+    const inRoute = new Set([].concat(...routes.map((g) => g.trips)));
+    const out = routes.map((g) => line(g.trips)).concat(base.filter((t) => !inRoute.has(t)).slice(-5).map((t) => line([t])));
+    return out.filter((l, i) => out.findIndex((x) => x.name === l.name) === i).slice(0, 8);
+  }
+  // Abstand eines Punkts zu einer Linie, in Metern (flache Näherung, genügt für eine Stadt)
+  function lineDist(p, pts) {
+    const kx = 111320 * Math.cos(p.lat * toR), ky = 110540;
+    let best = { d: Infinity, h: null, tol: 45 };
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const ax = (a.lon - p.lon) * kx, ay = (a.lat - p.lat) * ky, bx = (b.lon - p.lon) * kx, by = (b.lat - p.lat) * ky;
+      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+      const u = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+      const d = Math.hypot(ax + u * dx, ay + u * dy);
+      // zwischen weit entfernten Ampeln (etwa auf der Autobahn) ist die Linie nur grob, dort großzügiger
+      const tol = Math.min(800, Math.max(45, Math.sqrt(l2) * 0.12));
+      if (d - tol < best.d - best.tol) best = { d, h: bearing(a, b), tol };
+    }
+    return best;
+  }
+  function onLine(item, line) {
+    const ps = item.pts.map((q) => ({ lat: q[0], lon: q[1] }));
+    if (line.pts.length < 2) return false;
+    if (ps.length === 1) { const m = lineDist(ps[0], line.pts); return m.d <= Math.max(80, m.tol); }
+    const near = ps.map((q) => Object.assign({ q }, lineDist(q, line.pts))).filter((m) => m.d <= m.tol);
+    if (near.length < 2) return false;
+    if (!item.richtung) return true;
+    // Verkehrsfluss gilt je Richtung: nur, wenn der Abschnitt in Fahrtrichtung des Wegs liegt
+    const h = dist(near[0].q, near[near.length - 1].q) > 20 ? bearing(near[0].q, near[near.length - 1].q) : null;
+    return h == null || angDiff(h, near[0].h) <= 50;
+  }
+  // Treffer je Weg, gleiche Straße zusammengefasst (HERE teilt Straßen in viele kurze Abschnitte)
+  function myLage(group) {
+    const items = ((lageCache && lageCache.items) || []).filter((it) => it && Array.isArray(it.pts) && it.pts.length && (!LAGE_FOR[group] || LAGE_FOR[group].includes(it.art)));
+    const lines = lageLines(group);
+    const hits = [];
+    for (const line of lines) {
+      const by = {};
+      for (const it of items) {
+        if (!onLine(it, line)) continue;
+        const k = it.titel;
+        const h = by[k] || (by[k] = { titel: it.titel, art: it.art, delay: 0, parts: [], texts: [], quellen: new Set(), richtungText: it.richtungText || '', line });
+        if (LAGE_RANK[it.art] < LAGE_RANK[h.art]) h.art = it.art;
+        if (it.delay) h.delay += it.delay;
+        h.parts.push(it.pts);
+        if (it.text && !h.texts.includes(it.text)) h.texts.push(it.text);
+        h.quellen.add(it.quelle);
+      }
+      for (const h of Object.values(by)) if (!hits.some((x) => x.titel === h.titel && x.art === h.art)) hits.push(h);
+    }
+    hits.sort((a, b) => LAGE_RANK[a.art] - LAGE_RANK[b.art] || b.delay - a.delay);
+    return { lines, hits, total: items.length };
+  }
+  const lageBtn = (h) => `<button type="button" class="place" data-peek="l" data-name="${esc(h.titel)}" data-art="${h.art}" data-lines="${h.parts.map((p) => p.map((q) => q.join(',')).join(';')).join('|')}" data-pts="${h.line.pts.map((e) => `${e.lat},${e.lon}`).join(';')}">${esc(h.titel)}</button>`;
+  function lageCard(group) {
+    if (!lageOn() || !lageCache) return '';
+    const { lines, hits, total } = myLage(group);
+    const stand = new Date(lageCache.t || Date.now()).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    const src = (lageCache.quellen || []).map((q) => (q.name === 'HERE' ? '© HERE' : q.name === 'Autobahn GmbH' ? 'Autobahn GmbH des Bundes' : q.name)).join(', ');
+    const foot = `<p class="small muted lg-src">Stand ${stand} Uhr${src ? ' · ' + esc(src) : ''}</p>`;
+    if (!lines.length) return `<div class="card">${cardHead('alert', 'Vor der Fahrt', '', 'amber')}<p class="small muted">Nach den ersten Fahrten prüft Flowtown hier, ob es auf deinen Wegen Stau, Baustellen oder Sperrungen gibt.${total ? ` In Bielefeld gibt es gerade ${total} Meldung${total === 1 ? '' : 'en'}.` : ''}</p>${foot}</div>`;
+    if (!hits.length) return `<div class="card lage ok"><div class="lg-ok">${ic('check')}<span><b>Vor der Fahrt:</b> keine Meldungen auf deinen Wegen</span></div>${foot}</div>`;
+    const rows = hits.slice(0, 4).map((h) => {
+      const sub = [LAGE_LABEL[h.art], h.delay >= 30 ? `etwa +${Math.max(1, Math.round(h.delay / 60))} min` : '', h.richtungText, lines.length > 1 ? 'auf ' + h.line.name : ''].filter(Boolean).map(esc).join(' · ');
+      return `<li class="lg ${LAGE_CLS[h.art]}"><span class="lg-dot" aria-hidden="true"></span><div><b>${lageBtn(h)}</b><span class="small muted">${sub}</span>${h.texts[0] && h.art !== 'zaeh' ? `<span class="small lg-text">${esc(h.texts[0])}</span>` : ''}</div></li>`;
+    }).join('');
+    const more = hits.length > 4 ? `<p class="small muted">und ${hits.length - 4} weitere</p>` : '';
+    return `<div class="card lage">${cardHead('alert', 'Vor der Fahrt', 'Auf deinen Wegen', hits.some((h) => LAGE_CLS[h.art] === 'red') ? 'bad' : 'amber')}<ul class="lg-list">${rows}</ul>${more}${foot}</div>`;
   }
 
   // ---------- Tipps: feste Auswertung auf dem Gerät, noch ohne KI ----------
@@ -1944,12 +2056,12 @@
   $('#btn-start').addEventListener('click', startTrip);
   $('#tips-body').addEventListener('click', (ev) => { if (ev.target.closest('#btn-ki')) runKi(); });
   const saveServer = () => {
-    settings.server = { url: $('#inp-server').value.trim(), wir: $('#inp-wir').checked, ki: $('#inp-ki').checked };
+    settings.server = { url: $('#inp-server').value.trim(), wir: $('#inp-wir').checked, ki: $('#inp-ki').checked, lage: $('#inp-lage').checked };
     store.set('settings', settings);
-    wirCache = null; wirAt = 0; newsAt = 0;
+    wirCache = null; wirAt = 0; newsAt = 0; lageAt = 0; lageCache = null;
     if (settings.server.wir) flushWir();
   };
-  ['#inp-server', '#inp-wir', '#inp-ki'].forEach((id) => $(id).addEventListener('change', saveServer));
+  ['#inp-server', '#inp-wir', '#inp-ki', '#inp-lage'].forEach((id) => $(id).addEventListener('change', saveServer));
   $('#btn-server-test').addEventListener('click', async () => {
     saveServer();
     const st = $('#server-status');
@@ -1957,7 +2069,8 @@
     st.textContent = 'Verbindung wird geprüft …';
     try {
       const h = await api('/api/health');
-      st.textContent = `Verbunden. KI ${h.ki ? 'bereit (' + h.modell + ')' : 'auf dem Server noch nicht eingerichtet'}. Werte anderer ab ${h.kMin} Personen.`;
+      const lg = h.lage ? ` Verkehrslage: Autobahn${h.lage.here ? ' und Stadt (HERE)' : ', Stadt noch ohne HERE-Schlüssel'}.` : '';
+      st.textContent = `Verbunden. KI ${h.ki ? 'bereit (' + h.modell + ')' : 'auf dem Server noch nicht eingerichtet'}. Werte anderer ab ${h.kMin} Personen.${lg}`;
     } catch (e) { st.textContent = 'Keine Verbindung: ' + e.message; }
   });
   $('#today').addEventListener('click', (ev) => { const b = ev.target.closest('[data-goto]'); if (b) showView(b.dataset.goto); });
@@ -2033,6 +2146,7 @@
   $('#inp-server').value = settings.server.url || '';
   $('#inp-wir').checked = !!settings.server.wir;
   $('#inp-ki').checked = !!settings.server.ki;
+  $('#inp-lage').checked = settings.server.lage !== false;
   // Meldungen beim Start laden, damit sie auf „Heute“ erscheinen
   loadNews().then(() => { if (newsCache.length && !$('#view-start').hidden) renderToday(); });
   $('#inp-cut').value = String(settings.cut);
