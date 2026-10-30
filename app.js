@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.19.0';
+  const VERSION = '0.20.0';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -33,10 +33,10 @@
   const ACCESS_LABEL = { rollstuhl: 'Rollstuhl', rollator: 'Rollator oder langsames Gehen', sehen: 'Sehbehinderung', andere: 'andere Einschränkung' };
   // Zu Fuß ist man einen Weg gegangen, nicht gefahren
   const WORDS = {
-    fahrt: { one: 'Fahrt', many: 'Fahrten', none: 'Noch keine Fahrt', start: 'Fahrt starten', end: 'Fahrt beenden', cont: 'Weiterfahren', time: 'Fahrzeit',
+    fahrt: { one: 'Fahrt', many: 'Fahrten', none: 'Noch keine Fahrt', start: 'Losfahren', end: 'Fahrt beenden', cont: 'Weiterfahren', time: 'Fahrzeit',
       past: 'gefahren', bilanz: 'Fahrtbilanz', last: 'Letzte Fahrt', review: 'Wie war deine Fahrt?', short: 'Die Fahrt war zu kurz und wurde nicht gespeichert.',
       hold: 'Handy in die Halterung, App geöffnet lassen. Der Bildschirm bleibt an.', during: 'Während der Fahrt nichts antippen. Bewertet wird erst danach.' },
-    weg: { one: 'Weg', many: 'Wege', none: 'Noch kein Weg', start: 'Weg starten', end: 'Weg beenden', cont: 'Weitergehen', time: 'Gehzeit',
+    weg: { one: 'Weg', many: 'Wege', none: 'Noch kein Weg', start: 'Losgehen', end: 'Weg beenden', cont: 'Weitergehen', time: 'Gehzeit',
       past: 'gegangen', bilanz: 'Wegbilanz', last: 'Letzter Weg', review: 'Wie war dein Weg?', short: 'Der Weg war zu kurz und wurde nicht gespeichert.',
       hold: 'Handy in der Hand oder in der Tasche, App geöffnet lassen. Der Bildschirm bleibt an.', during: 'Unterwegs nichts antippen. Bewertet wird erst danach.' }
   };
@@ -860,7 +860,6 @@
   let reviewTrip = null;
   function openReview(trip) {
     reviewTrip = trip;
-    $('#h-review').textContent = words(trip.mode).review;
     const halts = trip.events.filter((e) => e.type === 'halt' && e.signal);
     const passes = trip.events.filter((e) => e.type === 'pass').length;
     const atStop = trip.events.filter((e) => e.type === 'halt' && e.atStop).length;
@@ -876,7 +875,11 @@
       atStop ? pill('pin', `${atStop} an Haltestellen`) : '',
       trs.length ? pill('walk', `${trs.length} Umstieg${trs.length === 1 ? '' : 'e'} · ${durText(trs.reduce((x, r) => x + r.wait, 0))}`) : '',
       other ? pill('info', `${other} ohne Ampel`) : ''
-    ].join('') + (halts.length ? '<p class="small muted ask">Wie war es an den Ampeln?</p>' : '');
+    ].join('');
+    renderReviewHead(trip, halts, passes, wait);
+    $('#review-ask').hidden = !halts.length && !trs.length;
+    $('#review-ask').textContent = halts.length ? 'Wie war es an den Ampeln?' : 'Wie war der Umstieg?';
+    $('#review-more').open = false;
     $('#btn-review-delete').dataset.armed = ''; $('#btn-review-delete span').textContent = 'Diese Aufzeichnung löschen';
     renderBilanz();
     renderReview();
@@ -950,6 +953,27 @@
       <li>${ic('light')}<span>An Ampeln</span><b>${durText(sum((e) => e.signal))}</b></li>
       ${trs.length ? `<li>${ic('walk')}<span>Umsteigen (${trs.length}×)</span><b>${durText(trs.reduce((a, r) => a + r.wait, 0))}</b></li>` : ''}
     </ul>`;
+  }
+  // Oben in der Bilanz: das Ergebnis in einem Satz, darunter wofür die Zeit draufging
+  function renderReviewHead(t, halts, passes, wait) {
+    const dur = (t.end || t.start) - t.start;
+    $('#review-label').textContent = words(t.mode).bilanz;
+    let head, sub;
+    if (t.plan) {
+      const d = dur - t.plan.dauer * 1000, dm = Math.round(Math.abs(d) / 60000);
+      head = dm < 2 ? 'Fast genau wie geplant' : d > 0 ? `${dm} min länger als geplant` : `${dm} min schneller als geplant`;
+      sub = `${esc(t.plan.name)} · geplant ${hm(t.plan.dauer)}, gebraucht ${hm(dur / 1000)}`;
+    } else {
+      head = `${hm(dur / 1000)}, davon ${durText(wait)} an Ampeln`;
+      sub = `${halts.length} Halt${halts.length === 1 ? '' : 'e'} an Ampeln, ${passes} ohne Halt · ${fmtNum(t.distance / 1000, 1)} km`;
+    }
+    $('#h-review').textContent = head;
+    const slow = t.mode === 'fuss' ? 0 : Math.max(0, slowMs(t) - wait);
+    const flow = Math.max(0, dur - slow - wait), all = Math.max(1, flow + slow + wait);
+    const pc = (x) => (x / all * 100).toFixed(1) + '%';
+    $('#review-head').innerHTML = `<p class="st-sub">${sub}</p>
+      <div class="rh-bar" role="img" aria-label="${esc(`${hmSay(dur / 1000)}, davon etwa ${hmSay(slow / 1000)} langsam oder im Stau und ${hmSay(wait / 1000)} an Ampeln`)}"><span style="width:${pc(flow)}"></span><span class="slow" style="width:${pc(slow)}"></span><span class="amp" style="width:${pc(wait)}"></span></div>
+      <ul class="pl-legend row-legend">${slow >= 60000 ? `<li><span class="lg-dot red"></span>etwa ${Math.round(slow / 60000)} min langsam oder Stau</li>` : ''}<li><span class="lg-dot"></span>${durText(wait)} an Ampeln</li></ul>`;
   }
   function renderBilanz() {
     const t = reviewTrip;
@@ -1123,6 +1147,7 @@
     </div>`;
   }
   function renderStats() {
+    renderHistTop();
     const since = statsRange === 'week' ? weekStart() : 0;
     const list = trips.filter((t) => t.start >= since);
     $('#stats-demo').hidden = !list.some((t) => t.demo);
@@ -1152,12 +1177,12 @@
       </div>
       ${costSummary(list)}
       ${worst ? `<div class="card worst">${cardHead('alert', 'Deine nervigste Ampel', '', 'bad')}<p><strong>${placeFor(worst.sample)}</strong>${worst.h != null ? ', ' + esc(dirName(worst.h)) : ''}</p><ul class="facts"><li>${ic('light')}<span>gehalten</span><b>${worst.halts}×</b></li><li>${ic('hourglass')}<span>zusammen</span><b>${fmtDur(worst.wait)} min</b></li><li>${ic('clock')}<span>längster Halt</span><b>${fmtDur(worst.maxWait)} min</b></li></ul></div>` : ''}
-      <h3 class="sec">${ic('light')}Alle Ampeln</h3>
-      ${table(rowList.slice(0, 8))}
-      ${rest(rowList, 8, 'Alle Ampeln anzeigen', table)}
       <h3 class="sec">${ic('calendar')}Fahrten und Wege</h3>
       <div class="card timeline">${tripTimeline(list, 8)}</div>
-      ${list.length > 8 ? `<details class="more-box"><summary>${ic('list')}Ältere anzeigen (${list.length - 8} weitere)</summary><div class="card timeline">${tripTimeline(list.slice().sort((x, y) => y.start - x.start).slice(8))}</div></details>` : ''}`;
+      ${list.length > 8 ? `<details class="more-box"><summary>${ic('list')}Ältere anzeigen (${list.length - 8} weitere)</summary><div class="card timeline">${tripTimeline(list.slice().sort((x, y) => y.start - x.start).slice(8))}</div></details>` : ''}
+      <h3 class="sec">${ic('light')}Alle Ampeln</h3>
+      ${table(rowList.slice(0, 8))}
+      ${rest(rowList, 8, 'Alle Ampeln anzeigen', table)}`;
     requestNames(ag.per.map((a) => a.sample), () => { if (!$('#view-stats').hidden) renderStats(); });
   }
   $('.seg').addEventListener('click', (ev) => {
@@ -1487,8 +1512,10 @@
   function showView(name) {
     if (name !== 'map') stopMyLocation();
     $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + name; });
+    document.body.dataset.view = name;   // Farbe und Ruhe je Ansicht (Aufzeichnung ohne Menü)
+    const tabFor = { drive: 'start', review: 'stats', map: 'stats' };
     $$('.tabs button').forEach((b) => {
-      const active = b.dataset.view === name || (name === 'drive' && b.dataset.view === 'start') || (name === 'review' && b.dataset.view === 'stats');
+      const active = b.dataset.view === (tabFor[name] || name);
       if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
     if (name === 'stats') renderStats();
@@ -1608,21 +1635,73 @@
   }
   function renderToday() {
     const group = MODE_GROUP[selectedMode()];
+    const top = computeTips()[0];
+    $('#today').innerHTML = top ? `<button type="button" class="top-tip" data-goto="tips"><span class="tt-label">Tipp</span><span class="tt-text">${top.short}</span>${ic('chevron', 'tt-go')}</button>` : '';
+    renderStatus(group);
+    renderVorfahrt();
+    if (lageOn() && Date.now() - lageAt >= 300000) loadLage().then((ok) => { if (ok && !$('#view-start').hidden) renderToday(); });
+  }
+  function sortedRoutes(group) {
     const now = new Date().getHours();
     const hourGap = (g) => Math.min(...g.trips.map((t) => { const d = Math.abs(new Date(t.start).getHours() - now); return Math.min(d, 24 - d); }));
     const own = (g) => g.trips.filter((t) => MODE_GROUP[t.mode] === group).length;
     let routes = findRoutes(trips.filter((t) => !t.demo)).sort((a, b) => own(b) - own(a) || hourGap(a) - hourGap(b));
     if (routes.some(own)) routes = routes.filter(own);   // Wege mit anderen Verkehrsmitteln nur, solange es keine eigenen gibt
+    return { routes, own };
+  }
+  // Oben auf „Heute“: die Lage als ein Satz
+  function renderStatus(group) {
+    const real = trips.filter((t) => !t.demo);
+    const h = new Date().getHours();
+    let label = 'Vor der Fahrt', title, sub = '', cls = 'ok', detail = '';
+    const { routes, own } = sortedRoutes(group);
+    const ownRoute = routes.find((g) => own(g));
+    if (ownRoute) {
+      const bh = bestHour(ownRoute.trips.filter((t) => MODE_GROUP[t.mode] === group));
+      sub = `Auf deinem häufigsten Weg jetzt etwa ${durText(bh.nowAvg)} an Ampeln.`;
+    }
+    if (!real.length) {
+      label = 'Willkommen'; cls = 'neutral';
+      title = 'Schön, dass du da bist.';
+      sub = 'Wähle, womit du unterwegs bist, und starte deine erste Aufzeichnung.';
+    } else if (lageOn() && lageCache) {
+      const { lines, hits } = myLage(group);
+      if (hits.length) {
+        const x = hits[0];
+        cls = LAGE_CLS[x.art] === 'red' ? 'red' : 'amber';
+        title = `${cap(LAGE_LABEL[x.art])}: ${x.titel}`;
+        sub = [delayText(x.delay), x.richtungText, hits.length > 1 ? `und ${hits.length - 1} weitere Meldung${hits.length > 2 ? 'en' : ''} auf deinen Wegen` : 'auf deinem Weg'].filter(Boolean).join(' · ');
+        detail = `<button type="button" class="btn-link" data-vf="lage" aria-expanded="${vfOpen}">${vfOpen ? 'Weniger' : 'Alle Meldungen'}</button>`;
+        if (vfOpen) {
+          detail += `<ul class="lg-list vf-detail">${hits.slice(0, 6).map((y) => lageRow(y.art, lageBtn(y), [LAGE_LABEL[y.art], delayText(y.delay), y.richtungText, lines.length > 1 ? 'auf ' + y.line.name : ''].filter(Boolean).map(esc).join(' · '), y.art !== 'zaeh' ? y.texts[0] : '')).join('')}</ul>`
+            + `<p class="small muted lg-src">Stand ${clock(lageCache.t || Date.now())} Uhr · ${esc(lageSrc((lageCache.quellen || []).map((q) => q.name)))}</p>`;
+        }
+      } else title = lines.length ? 'Deine Wege sind frei.' : 'Keine Meldungen in Bielefeld.';
+    } else {
+      cls = 'neutral';
+      title = h < 11 ? 'Guten Morgen.' : h < 18 ? 'Guten Tag.' : 'Guten Abend.';
+      if (lageOn()) label = 'Lage wird geladen …';
+    }
+    const el = $('#status');
+    el.className = 'status ' + cls;
+    $('#st-label-text').textContent = label;
+    $('#st-label use').setAttribute('href', cls === 'ok' ? '#i-check' : cls === 'neutral' ? '#i-route' : '#i-alert');
+    $('#h-start').textContent = title;
+    $('#st-sub').textContent = sub;
+    $('#st-sub').hidden = !sub;
+    $('#st-detail').innerHTML = detail;
+  }
+  $('#status').addEventListener('click', (ev) => { if (ev.target.closest('[data-vf="lage"]')) { vfOpen = !vfOpen; renderStatus(MODE_GROUP[selectedMode()]); } });
+  // Verlauf oben: eigene Wege mit bester Abfahrt, Kennzahlen je Verkehrsmittel
+  function renderHistTop() {
+    const group = MODE_GROUP[selectedMode()];
+    const { routes } = sortedRoutes(group);
     const html = routes.length
       ? routes.slice(0, 2).map((g) => routeCard(g, group))
       : [`<div class="card">${cardHead('route', 'Deine Wege')}<p class="small muted">Ab zwei Fahrten auf derselben Strecke zeigt Flowtown hier deinen Weg und die beste Abfahrtszeit.</p></div>`];
-    const top = computeTips()[0];
-    if (top) html.unshift(`<button type="button" class="card top-tip" data-goto="tips"><span class="chip amber">${ic('bulb')}</span><span class="tt-text"><span class="meta">Dein Tipp</span>${top.short}</span>${ic('chevron', 'tt-go')}</button>`);
     html.push(modeCard(group));
     if (settings.access.on) html.push(accessCard());
-    $('#today').innerHTML = html.join('');
-    renderVorfahrt();
-    if (lageOn() && Date.now() - lageAt >= 300000) loadLage().then((ok) => { if (ok && !$('#view-start').hidden) renderToday(); });
+    $('#hist-top').innerHTML = html.join('');
   }
 
   // ---------- Flowtown-Server: Ebene „Wir“, KI-Einschätzung, Meldungen ----------
@@ -1794,21 +1873,6 @@
     if (!apiBase()) { el.hidden = true; el.innerHTML = ''; return; }
     el.hidden = false;
     const group = MODE_GROUP[selectedMode()];
-    let line = '';
-    if (lageOn() && lageCache) {
-      const { lines, hits } = myLage(group);
-      if (!lines.length) line = `<p class="small muted vf-hint">Nach den ersten Fahrten prüft Flowtown hier deine Wege auf Stau, Baustellen und Sperrungen.</p>`;
-      else if (!hits.length) line = `<p class="vf-line ok">${ic('check')}<span>Deine Wege: frei</span></p>`;
-      else {
-        const h = hits[0];
-        const sum = [`<b>${esc(h.titel)}</b>`, esc(LAGE_LABEL[h.art]), delayText(h.delay), hits.length > 1 ? `+${hits.length - 1} weitere` : ''].filter(Boolean).join(' · ');
-        line = `<button type="button" class="vf-line ${LAGE_CLS[h.art]}" data-vf="lage" aria-expanded="${vfOpen}"><span class="lg-dot" aria-hidden="true"></span><span>${sum}</span>${ic('chevron', 'vf-chev')}</button>`;
-        if (vfOpen) {
-          line += `<ul class="lg-list vf-detail">${hits.slice(0, 6).map((x) => lageRow(x.art, lageBtn(x), [LAGE_LABEL[x.art], delayText(x.delay), x.richtungText, lines.length > 1 ? 'auf ' + x.line.name : ''].filter(Boolean).map(esc).join(' · '), x.art !== 'zaeh' ? x.texts[0] : '')).join('')}</ul>`
-            + `<p class="small muted lg-src">Stand ${clock(lageCache.t || Date.now())} Uhr · ${esc(lageSrc((lageCache.quellen || []).map((q) => q.name)))}</p>`;
-        }
-      }
-    } else if (lageOn()) line = `<p class="small muted vf-hint">Lage wird geladen …</p>`;
     const can = zielFor(group);
     const chips = settings.ziele.map((z) => `<button type="button" class="vf-chip${zielOpen === z.id ? ' on' : ''}" data-ziel="${z.id}" aria-expanded="${zielOpen === z.id}"${can ? '' : ' disabled'}>${esc(z.name)}</button>`).join('')
       + (settings.ziele.length < ZIEL_MAX ? `<button type="button" class="vf-chip add${zielOpen === 'neu' ? ' on' : ''}" data-ziel="neu" aria-expanded="${zielOpen === 'neu'}"${can ? '' : ' disabled'}>+ Ziel</button>` : '');
@@ -1817,7 +1881,7 @@
     if (openZ && !zielRes[openZ.id + '|' + group]) { checkZiel(openZ); return; }
     const panel = !can ? (settings.ziele.length ? '<p class="small muted">Ziele prüft Flowtown mit dem Auto und dem Rad.</p>' : '')
       : zielOpen === 'neu' ? zielForm() : zielOpen ? zielPanel(settings.ziele.find((z) => z.id === zielOpen), group) : '';
-    el.innerHTML = `<div class="card vf"><h3 class="vf-title">Vor der Fahrt</h3>${line}<div class="vf-chips" role="group" aria-label="Deine Ziele">${chips}</div>${panel}</div>`;
+    el.innerHTML = `<section class="vf world-vor" aria-labelledby="vf-h"><h3 class="vf-title" id="vf-h">Woanders hin?</h3><div class="vf-chips" role="group" aria-label="Deine Ziele">${chips}</div>${panel}</section>`;
   }
   function zielForm() {
     const list = ortList ? (ortList.length
@@ -1939,8 +2003,7 @@
     if (!b) return;
     const z = settings.ziele.find((x) => x.id === zielOpen);
     const act = b.dataset.vf;
-    if (act === 'lage') vfOpen = !vfOpen;
-    else if (act === 'close') { zielOpen = null; zielEdit = false; }
+    if (act === 'close') { zielOpen = null; zielEdit = false; }
     else if (act === 'edit') zielEdit = !zielEdit;
     else if (act === 'again' && z) { checkZiel(z, true); return; }
     else if (act === 'go' && z) {
@@ -2262,12 +2325,8 @@
   }
 
   function renderLastTrip() {
-    const el = $('#last-trip');
-    const recent = trips.filter((x) => !x.demo);
     $('#today-date').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
-    $('#hints').open = !recent.length;   // Hinweise nur offen, solange es noch keine Fahrt gibt
-    if (!recent.length) { el.innerHTML = ''; return; }
-    el.innerHTML = `<div class="card">${cardHead('calendar', 'Letzte Fahrten')}${tripTimeline(recent, 4)}<button type="button" class="btn quiet" data-goto="stats">${ic('list')}Alle Fahrten</button></div>`;
+    $('#hints').open = !trips.some((x) => !x.demo);   // Hinweise nur offen, solange es noch keine Fahrt gibt
   }
 
   // ---------- Ereignisse ----------
@@ -2292,10 +2351,7 @@
     } catch (e) { st.textContent = 'Keine Verbindung: ' + e.message; }
   });
   $('#today').addEventListener('click', (ev) => { const b = ev.target.closest('[data-goto]'); if (b) showView(b.dataset.goto); });
-  $('#last-trip').addEventListener('click', (ev) => {
-    const g = ev.target.closest('[data-goto]'); if (g) { showView(g.dataset.goto); return; }
-    const b = ev.target.closest('[data-review]'); const t = b && trips.find((x) => x.id === b.dataset.review); if (t) openReview(t);
-  });
+  ['#view-stats', '#view-map'].forEach((id) => $(id).addEventListener('click', (ev) => { const b = ev.target.closest('button[data-goto]'); if (b) showView(b.dataset.goto); }));
   $('#btn-transfer').addEventListener('click', startTransfer);
   $('#btn-next-bahn').addEventListener('click', () => endTransfer('bahn'));
   $('#btn-next-bus').addEventListener('click', () => endTransfer('bus'));

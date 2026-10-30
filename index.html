@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Flowtown</title>
 <meta name="description" content="Flowtown – Die grüne Welle beginnt bei dir. Weniger Stopps, weniger Sprit, in der Stadt und auf der Autobahn. Prototyp: zeichnet Halte an Ampeln auf und zeigt, wo du wartest.">
-<meta name="theme-color" content="#16202a">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f151b" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -70,9 +71,15 @@
   <p id="app-error" class="msg warn app-error" role="alert" hidden></p>
   <!-- Fahren -->
   <section id="view-start" class="view" aria-labelledby="h-start">
-    <div class="hello"><p class="hello-date" id="today-date"></p><h2 id="h-start">Heute unterwegs</h2></div>
+    <p class="hello-date" id="today-date"></p>
+    <div id="status" class="status ok">
+      <span class="st-label" id="st-label"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span id="st-label-text">Vor der Fahrt</span></span>
+      <h2 id="h-start" class="st-title" aria-live="polite">Heute unterwegs</h2>
+      <p class="st-sub" id="st-sub"></p>
+      <div id="st-detail"></div>
+    </div>
     <fieldset class="switch">
-      <legend>Womit bist du unterwegs?</legend>
+      <legend>Womit?</legend>
       <div class="switch-row">
         <label><input type="radio" name="mgroup" value="auto" checked><span><svg class="ic" aria-hidden="true"><use href="#i-car"/></svg>Auto</span></label>
         <label><input type="radio" name="mgroup" value="rad"><span><svg class="ic" aria-hidden="true"><use href="#i-bike"/></svg>Rad</span></label>
@@ -93,9 +100,9 @@
         <option value="andere">andere Einschränkung</option>
       </select>
     </div>
-    <div id="vorfahrt" class="vorfahrt" hidden></div>
-    <button id="btn-start" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span id="btn-start-label">Fahrt starten</span></button>
+    <button id="btn-start" class="btn primary big go" type="button"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span id="btn-start-label">Losfahren</span></button>
     <p id="start-msg" class="msg" role="status" aria-live="polite"></p>
+    <div id="vorfahrt" class="vorfahrt" hidden></div>
     <div id="today" class="today"></div>
     <details class="card hints" id="hints">
       <summary class="card-head"><span class="chip"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg></span><h3>So klappt die Aufzeichnung</h3></summary>
@@ -105,7 +112,6 @@
         <li><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg><span>Gespeichert werden nur Halte an Ampeln und Ampeln ohne Halt, keine Start- und Zielorte. Fährst du mit Ziel los, nur dessen Name.</span></li>
       </ul>
     </details>
-    <div id="last-trip"></div>
   </section>
 
   <!-- Aufzeichnung -->
@@ -140,10 +146,15 @@
 
   <!-- Bewertung -->
   <section id="view-review" class="view" hidden aria-labelledby="h-review">
-    <h2 id="h-review">Wie war deine Fahrt?</h2>
-    <div id="review-bilanz"></div>
-    <div id="review-summary" class="pills"></div>
+    <span class="st-label hist" id="review-label">Fahrt beendet</span>
+    <h2 id="h-review" class="st-title">Wie war deine Fahrt?</h2>
+    <div id="review-head" class="review-head"></div>
+    <h3 class="ask-title" id="review-ask">Wie war es an den Ampeln?</h3>
     <div id="review-list" class="list"></div>
+    <details class="more-box" id="review-more"><summary><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Alle Details</summary>
+      <div id="review-summary" class="pills"></div>
+      <div id="review-bilanz"></div>
+    </details>
     <button id="btn-review-done" class="btn primary big" type="button"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Fertig</button>
     <button id="btn-review-delete" class="btn quiet" type="button"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg><span>Diese Aufzeichnung löschen</span></button>
   </section>
@@ -157,7 +168,10 @@
 
   <!-- Statistik -->
   <section id="view-stats" class="view" hidden aria-labelledby="h-stats">
-    <h2 id="h-stats">Deine Wartezeit</h2>
+    <h2 id="h-stats">Verlauf</h2>
+    <div id="hist-top" class="today"></div>
+    <button type="button" class="world-link" data-goto="map"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg><span><b>Karte</b><span>Wo es in Bielefeld hakt</span></span><svg class="ic" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+    <h3 class="sec-title">Deine Wartezeit</h3>
     <div class="seg" role="group" aria-label="Zeitraum">
       <button type="button" data-range="week" aria-pressed="true"><svg class="ic" aria-hidden="true"><use href="#i-calendar"/></svg>Diese Woche</button>
       <button type="button" data-range="all" aria-pressed="false"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Gesamt</button>
@@ -168,6 +182,7 @@
 
   <!-- Karte -->
   <section id="view-map" class="view view-map" hidden aria-labelledby="h-map">
+    <button type="button" class="back-link" data-goto="stats"><svg class="ic flip" aria-hidden="true"><use href="#i-chevron"/></svg>Verlauf</button>
     <h2 id="h-map">Deine Warte-Wolke</h2>
     <div class="seg" id="map-mode" role="group" aria-label="Ansicht der Karte">
       <button type="button" data-mode="signals" aria-pressed="true"><svg class="ic" aria-hidden="true"><use href="#i-light"/></svg>Ampeln</button>
@@ -263,11 +278,10 @@
 </dialog>
 
 <nav class="tabs" aria-label="Hauptnavigation">
-  <button type="button" data-view="start" aria-current="page"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span>Heute</span></button>
-  <button type="button" data-view="tips"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg><span>Tipps</span></button>
-  <button type="button" data-view="stats"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Statistik</span></button>
-  <button type="button" data-view="map"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg><span>Karte</span></button>
-  <button type="button" data-view="more"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg><span>Mehr</span></button>
+  <button type="button" data-view="start" data-world="go" aria-current="page"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg><span>Heute</span></button>
+  <button type="button" data-view="tips" data-world="tip"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg><span>Tipps</span></button>
+  <button type="button" data-view="stats" data-world="hist"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Verlauf</span></button>
+  <button type="button" data-view="more" data-world="more"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg><span>Mehr</span></button>
 </nav>
 
 <script>

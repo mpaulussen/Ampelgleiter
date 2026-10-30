@@ -1,7 +1,8 @@
 // Offline-Fähigkeit: App-Dateien zwischenspeichern, Karten und Ampeldaten immer live laden
-const CACHE = 'flowtown-0.19.0';
+const CACHE = 'flowtown-0.20.0';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png',
-  'vendor/leaflet/leaflet.css', 'vendor/leaflet/leaflet.js'];
+  'vendor/leaflet/leaflet.css', 'vendor/leaflet/leaflet.js',
+  'vendor/fonts/atkinson-hyperlegible-latin-400-normal.woff2', 'vendor/fonts/atkinson-hyperlegible-latin-700-normal.woff2'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
